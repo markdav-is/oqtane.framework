@@ -3,11 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
-using System;
-using System.Reflection;
 using Oqtane.Documentation;
 using Oqtane.Shared;
-using Oqtane.UI;
 
 namespace Oqtane.Services
 {
@@ -32,11 +29,6 @@ namespace Oqtane.Services
         public async Task UpdateModuleDefinitionAsync(ModuleDefinition moduleDefinition)
         {
             await PutJsonAsync($"{Apiurl}/{moduleDefinition.ModuleDefinitionId}", moduleDefinition);
-        }
-
-        public async Task InstallModuleDefinitionsAsync()
-        {
-            await GetJsonAsync<List<string>>($"{Apiurl}/install");
         }
 
         public async Task DeleteModuleDefinitionAsync(int moduleDefinitionId, int siteId)

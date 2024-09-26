@@ -1,5 +1,4 @@
 using Oqtane.Models;
-using Oqtane.UI;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -32,13 +31,6 @@ namespace Oqtane.Services
         /// <param name="moduleDefinition"></param>
         /// <returns></returns>
         Task UpdateModuleDefinitionAsync(ModuleDefinition moduleDefinition);
-
-
-        /// <summary>
-        /// Installs all module definitions located in //TODO: 2dm where?
-        /// </summary>
-        /// <returns></returns>
-        Task InstallModuleDefinitionsAsync();
 
         /// <summary>
         /// Deletes a module definition
