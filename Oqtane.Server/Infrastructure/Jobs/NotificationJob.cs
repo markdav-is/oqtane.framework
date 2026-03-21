@@ -58,7 +58,7 @@ namespace Oqtane.Infrastructure
                             Port = int.Parse(settings["SMTPPort"]),
                             EnableSsl = bool.Parse(settings["SMTPSSL"])
                         };
-                        if (settings["SMTPUsername"] != "" && settings["SMTPPassword"] != "")
+                        if (settings.GetValueOrDefault("SMTPUsername", "") != "" && settings.GetValueOrDefault("SMTPPassword", "") != "")
                         {
                             client.Credentials = new NetworkCredential(settings["SMTPUsername"], settings["SMTPPassword"]);
                         }
@@ -99,22 +99,24 @@ namespace Oqtane.Infrastructure
                             {
                                 MailMessage mailMessage = new MailMessage();
 
-                                // sender
-                                if (settings.ContainsKey("SMTPRelay") && settings["SMTPRelay"] == "True" && !string.IsNullOrEmpty(notification.FromEmail))
+                                // sender - in relay mode use the notification's FromEmail if valid; otherwise always fall back to the configured SMTPSender
+                                string senderEmail = settings["SMTPSender"];
+                                string senderDisplayName = !string.IsNullOrEmpty(notification.FromDisplayName) ? notification.FromDisplayName : site.Name;
+                                if (settings.GetValueOrDefault("SMTPRelay", "False") == "True")
                                 {
-                                    if (!string.IsNullOrEmpty(notification.FromDisplayName))
+                                    if (!string.IsNullOrEmpty(notification.FromEmail) && MailAddress.TryCreate(notification.FromEmail, out _))
                                     {
-                                        mailMessage.From = new MailAddress(notification.FromEmail, notification.FromDisplayName);
+                                        senderEmail = notification.FromEmail;
+                                        senderDisplayName = notification.FromDisplayName ?? "";
                                     }
                                     else
                                     {
-                                        mailMessage.From = new MailAddress(notification.FromEmail);
+                                        log += $"NotificationId: {notification.NotificationId} - Relay mode enabled but sender email is missing or invalid ({notification.FromEmail}), using configured SMTP Sender<br />";
                                     }
                                 }
-                                else
-                                {
-                                    mailMessage.From = new MailAddress(settings["SMTPSender"], (!string.IsNullOrEmpty(notification.FromDisplayName)) ? notification.FromDisplayName : site.Name);
-                                }
+                                mailMessage.From = !string.IsNullOrEmpty(senderDisplayName)
+                                    ? new MailAddress(senderEmail, senderDisplayName)
+                                    : new MailAddress(senderEmail);
 
                                 // recipient
                                 if (!string.IsNullOrEmpty(notification.ToDisplayName))
