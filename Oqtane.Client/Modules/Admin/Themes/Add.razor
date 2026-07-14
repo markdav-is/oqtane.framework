@@ -384,15 +384,18 @@
     {
         try
         {
+            ShowProgressIndicator();
             await PackageService.DownloadPackageAsync(_packageid, _version);
             await logger.LogInformation("Package {PackageId} {Version} Downloaded Successfully", _packageid, _version);
 			AddModuleMessage(string.Format(Localizer["Success.Theme.Download"], NavigateUrl("admin/system")), MessageType.Success);
             _productname = "";
             _license = "";
             StateHasChanged();
+            HideProgressIndicator();
         }
         catch (Exception ex)
         {
+            HideProgressIndicator();
             await logger.LogError(ex, "Error Downloading Package {PackageId} {Version}", _packageid, _version);
             AddModuleMessage(Localizer["Error.Theme.Download"], MessageType.Error);
         }
