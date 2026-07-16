@@ -33,16 +33,21 @@ namespace Oqtane.Migrations.EntityBuilders
 
         protected string Schema { get; init; }
 
-        private string RewriteSqlEntityTableName(string name)
+        private string AddSchema(string name)
         {
-            if (Schema == null)
+            if (string.IsNullOrEmpty(Schema))
             {
-                return RewriteName(name);
+                return name;
             }
             else
             {
-                return $"{Schema}.{RewriteName(name)}";
+                return $"{Schema}.{name}";
             }
+        }
+
+        private string DelimitName(string name)
+        {
+            return ActiveDatabase.DelimitName(name);
         }
 
         private string RewriteName(string name)
@@ -50,14 +55,9 @@ namespace Oqtane.Migrations.EntityBuilders
             return ActiveDatabase.RewriteName(name);
         }
 
-        private string RewriteName(string name, bool isQuery)
+        private string RewriteValue(object value)
         {
-            return ActiveDatabase.RewriteName(name, isQuery);
-        }
-
-        private string RewriteValue(string value, string type)
-        {
-            return ActiveDatabase.RewriteValue(value, type);
+            return ActiveDatabase.RewriteValue(value);
         }
 
         // Column Operations
@@ -172,7 +172,7 @@ namespace Oqtane.Migrations.EntityBuilders
             return table.Column<TimeOnly>(name: RewriteName(name), nullable: nullable, defaultValue: defaultValue);
         }
 
-        // btye
+        // byte
         public void AddByteColumn(string name, bool nullable = false)
         {
             _migrationBuilder.AddColumn<byte>(RewriteName(name), RewriteName(EntityTableName), nullable: nullable, schema: Schema);
@@ -212,6 +212,27 @@ namespace Oqtane.Migrations.EntityBuilders
         protected OperationBuilder<AddColumnOperation> AddIntegerColumn(ColumnsBuilder table, string name, bool nullable, int defaultValue)
         {
             return table.Column<int>(name: RewriteName(name), nullable: nullable, defaultValue: defaultValue);
+        }
+
+        // long
+        public void AddLongColumn(string name, bool nullable = false)
+        {
+            _migrationBuilder.AddColumn<long>(RewriteName(name), RewriteName(EntityTableName), nullable: nullable, schema: Schema);
+        }
+
+        public void AddLongColumn(string name, bool nullable, long defaultValue)
+        {
+            _migrationBuilder.AddColumn<long>(RewriteName(name), RewriteName(EntityTableName), nullable: nullable, defaultValue: defaultValue, schema: Schema);
+        }
+
+        protected OperationBuilder<AddColumnOperation> AddLongColumn(ColumnsBuilder table, string name, bool nullable = false)
+        {
+            return table.Column<long>(name: RewriteName(name), nullable: nullable);
+        }
+
+        protected OperationBuilder<AddColumnOperation> AddLongColumn(ColumnsBuilder table, string name, bool nullable, long defaultValue)
+        {
+            return table.Column<long>(name: RewriteName(name), nullable: nullable, defaultValue: defaultValue);
         }
 
 
@@ -297,6 +318,27 @@ namespace Oqtane.Migrations.EntityBuilders
         protected OperationBuilder<AddColumnOperation> AddGuidColumn(ColumnsBuilder table, string name, bool nullable, Guid defaultValue)
         {
             return table.Column<Guid>(name: RewriteName(name), nullable: nullable, defaultValue: defaultValue);
+        }
+
+        // binary
+        public void AddBinaryColumn(string name, int length, bool nullable = false, bool unicode = true)
+        {
+            _migrationBuilder.AddColumn<byte[]>(RewriteName(name), RewriteName(EntityTableName), maxLength: length, nullable: nullable, unicode: unicode, schema: Schema);
+        }
+
+        public void AddBinaryColumn(string name, int length, bool nullable, bool unicode, string defaultValue)
+        {
+            _migrationBuilder.AddColumn<byte[]>(RewriteName(name), RewriteName(EntityTableName), maxLength: length, nullable: nullable, unicode: unicode, defaultValue: defaultValue, schema: Schema);
+        }
+
+        protected OperationBuilder<AddColumnOperation> AddBinaryColumn(ColumnsBuilder table, string name, int length, bool nullable = false, bool unicode = true)
+        {
+            return table.Column<byte[]>(name: RewriteName(name), maxLength: length, nullable: nullable, unicode: unicode);
+        }
+
+        protected OperationBuilder<AddColumnOperation> AddBinaryColumn(ColumnsBuilder table, string name, int length, bool nullable, bool unicode, string defaultValue)
+        {
+            return table.Column<byte[]>(name: RewriteName(name), maxLength: length, nullable: nullable, unicode: unicode, defaultValue: defaultValue);
         }
 
         // alter string
@@ -466,34 +508,108 @@ namespace Oqtane.Migrations.EntityBuilders
 
         //Sql Operations
 
-        public void DeleteFromTable(string condition = "")
+        public void InsertData(string[] columns, object[] values, string condition)
         {
-            var deleteSql = $"DELETE FROM {RewriteSqlEntityTableName(EntityTableName)} ";
-            if(!string.IsNullOrEmpty(condition))
+            var sql = $"INSERT INTO {AddSchema(DelimitName(RewriteName(EntityTableName)))} ";
+            if (columns != null && columns.Length > 0)
             {
-                deleteSql +=  $"WHERE {condition}";
+                sql += "(";
+                for (var i = 0; i < columns.Length; i++)
+                {
+                    sql += ((i == 0) ? "" : ", ") + $"{DelimitName(RewriteName(columns[i]))}";
+                }
+                sql += ") ";
             }
-            _migrationBuilder.Sql(deleteSql);
+            if (values != null && values.Length > 0)
+            {
+                sql += "VALUES (";
+                for (var i = 0; i < values.Length; i++)
+                {
+                    sql += ((i == 0) ? "" : ", ") + $"{RewriteValue(values[i])}";
+                }
+                sql += ") ";
+            }
+            if (!string.IsNullOrEmpty(condition))
+            {
+                // note that condition values must be created using RewriteName(), DelimitName(), RewriteValue() if targeting multiple database platforms 
+                sql += $"{condition}";
+            }
+            _migrationBuilder.Sql(sql);
         }
 
+        public void UpdateData(string column, object value)
+        {
+            UpdateData([column], [value], "");
+        }
+
+        public void UpdateData(string column, object value, string condition)
+        {
+            UpdateData([column], [value], condition);
+        }
+
+        public void UpdateData(string[] columns, object[] values, string condition)
+        {
+            var sql = $"UPDATE {AddSchema(DelimitName(RewriteName(EntityTableName)))} ";
+            if (columns != null && values != null && columns.Length > 0 && values.Length > 0 && columns.Length == values.Length)
+            {
+                sql += "SET ";
+                for (var i = 0; i < columns.Length; i++)
+                {
+                    sql += ((i == 0) ? "" : ", ") + $"{DelimitName(RewriteName(columns[i]))} = {RewriteValue(values[i])}";
+                }
+                sql += " ";
+            }
+            if (!string.IsNullOrEmpty(condition))
+            {
+                // note that condition values must be created using RewriteName(), DelimitName(), RewriteValue() if targeting multiple database platforms 
+                sql += $"WHERE {condition}";
+            }
+            _migrationBuilder.Sql(sql);
+        }
+
+        public void DeleteData(string condition)
+        {
+            var sql = $"DELETE FROM {AddSchema(DelimitName(RewriteName(EntityTableName)))} ";
+            if (!string.IsNullOrEmpty(condition))
+            {
+                // note that condition values must be created using RewriteName(), DelimitName(), RewriteValue() if targeting multiple database platforms 
+                sql += $"WHERE {condition}";
+            }
+            _migrationBuilder.Sql(sql);
+        }
+
+
+        [Obsolete("DeleteFromTable(condition) is deprecated. Use DeleteData(condition) instead", false)]
+        public void DeleteFromTable(string condition = "")
+        {
+            DeleteData(condition);
+        }
+
+        [Obsolete("UpdateColumn(columnName, value) is deprecated. Use UpdateData(column, value) instead", false)]
         public void UpdateColumn(string columnName, string value)
         {
             UpdateColumn(columnName, value, "", "");
         }
 
+        [Obsolete("UpdateColumn(columnName, value, condition) is deprecated. Use UpdateData(column, value, condition) instead", false)]
         public void UpdateColumn(string columnName, string value, string condition)
         {
             UpdateColumn(columnName, value, "", condition);
         }
 
+        [Obsolete("UpdateColumn(columnName, value, type, condition) is deprecated. Use UpdateData(column, value, condition) instead", false)]
         public void UpdateColumn(string columnName, string value, string type, string condition)
         {
-            var updateSql = $"UPDATE {RewriteSqlEntityTableName(EntityTableName)} SET {RewriteName(columnName, true)} = {RewriteValue(value, type)} ";
-            if (!string.IsNullOrEmpty(condition))
+            object obj;
+            if (type == "bool")
             {
-                updateSql += $"WHERE {condition}";
+                obj = (value == "1") ? true : false; // boolean values had custom logic for PostgreSQL
             }
-            _migrationBuilder.Sql(updateSql);
+            else
+            {
+                obj = value;
+            }
+            UpdateData([columnName], [obj], condition);
         }
     }
 }

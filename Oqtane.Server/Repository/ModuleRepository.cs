@@ -4,7 +4,6 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Oqtane.Extensions;
 using Oqtane.Models;
 using Oqtane.Modules;
 using Oqtane.Shared;
@@ -12,6 +11,20 @@ using Module = Oqtane.Models.Module;
 
 namespace Oqtane.Repository
 {
+    public interface IModuleRepository
+    {
+        IEnumerable<Module> GetModules(int siteId);
+        Module AddModule(Module module);
+        Module UpdateModule(Module module);
+        Module GetModule(int moduleId);
+        Module GetModule(int moduleId, bool tracking);
+        void DeleteModule(int moduleId);
+        string ExportModule(int moduleId);
+        string ExportModule(Module module, string IPortableContext);
+        bool ImportModule(int moduleId, string content);
+        bool ImportModule(Module module, string content, string IPortableContext);
+    }
+
     public class ModuleRepository : IModuleRepository
     {
         private readonly IDbContextFactory<TenantDBContext> _dbContextFactory;
@@ -89,19 +102,27 @@ namespace Oqtane.Repository
 
         public string ExportModule(int moduleId)
         {
+            Module module = GetModule(moduleId);
+            return ExportModule(module, "Export Module");
+        }
+
+        public string ExportModule(Module module, string IPortableContext)
+        {
             string content = "";
             try
             {
-                Module module = GetModule(moduleId);
                 if (module != null)
                 {
                     List<ModuleDefinition> moduledefinitions = _moduleDefinitions.GetModuleDefinitions(module.SiteId).ToList();
                     ModuleDefinition moduledefinition = moduledefinitions.FirstOrDefault(item => item.ModuleDefinitionName == module.ModuleDefinitionName);
                     if (moduledefinition != null)
                     {
+                        var settings = _settings.GetSettings(EntityNames.Module, module.ModuleId);
+
                         ModuleContent modulecontent = new ModuleContent();
                         modulecontent.ModuleDefinitionName = moduledefinition.ModuleDefinitionName;
                         modulecontent.Version = moduledefinition.Version;
+                        modulecontent.Settings = settings.Where(item => !item.IsPrivate).ToDictionary(x => x.SettingName, x => x.SettingValue);
                         modulecontent.Content = "";
 
                         if (moduledefinition.ServerManagerType != "")
@@ -111,7 +132,8 @@ namespace Oqtane.Repository
                             {
                                 try
                                 {
-                                    module.Settings = _settings.GetSettings(EntityNames.Module, moduleId).ToDictionary(x => x.SettingName, x => x.SettingValue);
+                                    module.IPortableContext = IPortableContext;
+                                    module.Settings = settings.ToDictionary(x => x.SettingName, x => x.SettingValue);
                                     var moduleobject = ActivatorUtilities.CreateInstance(_serviceProvider, moduletype);
                                     modulecontent.Content = ((IPortable)moduleobject).ExportModule(module);
                                 }
@@ -136,19 +158,58 @@ namespace Oqtane.Repository
 
         public bool ImportModule(int moduleId, string content)
         {
+            Module module = GetModule(moduleId);
+            return ImportModule(module, content, "Import Module");
+        }
+
+        public bool ImportModule(Module module, string content, string IPortableContext)
+        {
             bool success = false;
             try
             {
-                Module module = GetModule(moduleId);
                 if (module != null)
                 {
                     List<ModuleDefinition> moduledefinitions = _moduleDefinitions.GetModuleDefinitions(module.SiteId).ToList();
                     ModuleDefinition moduledefinition = moduledefinitions.Where(item => item.ModuleDefinitionName == module.ModuleDefinitionName).FirstOrDefault();
                     if (moduledefinition != null)
                     {
-                        ModuleContent modulecontent = JsonSerializer.Deserialize<ModuleContent>(content.Replace("\n", ""));
+                        var modulecontent = new ModuleContent();
+                        if (content.StartsWith("{") && content.EndsWith("}"))
+                        {
+                            // content was exported as a serialized ModuleContent object
+                            modulecontent = JsonSerializer.Deserialize<ModuleContent>(content.Replace("\n", ""));
+                        }
+                        else
+                        {
+                            // raw content
+                            modulecontent.ModuleDefinitionName = moduledefinition.ModuleDefinitionName;
+                            modulecontent.Version = moduledefinition.Version;
+                            modulecontent.Content = content;
+                        }
                         if (modulecontent.ModuleDefinitionName == moduledefinition.ModuleDefinitionName)
                         {
+                            if (modulecontent.Settings != null)
+                            {
+                                var settings = _settings.GetSettings(EntityNames.Module, module.ModuleId);
+                                foreach (var kvp in modulecontent.Settings)
+                                {
+                                    var setting = settings.FirstOrDefault(item => item.SettingName == kvp.Key);
+                                    if (setting == null)
+                                    {
+                                        setting = new Setting { EntityName = EntityNames.Module, EntityId = module.ModuleId, SettingName = kvp.Key, SettingValue = kvp.Value, IsPrivate = false };
+                                        _settings.AddSetting(setting);
+                                    }
+                                    else
+                                    {
+                                        if (setting.SettingValue != kvp.Value)
+                                        {
+                                            setting.SettingValue = kvp.Value;
+                                            _settings.UpdateSetting(setting);
+                                        }
+                                    }
+                                }
+                            }
+
                             if (moduledefinition.ServerManagerType != "")
                             {
                                 Type moduletype = Type.GetType(moduledefinition.ServerManagerType);
@@ -156,7 +217,8 @@ namespace Oqtane.Repository
                                 {
                                     try
                                     {
-                                        module.Settings = _settings.GetSettings(EntityNames.Module, moduleId).ToDictionary(x => x.SettingName, x => x.SettingValue);
+                                        module.IPortableContext = IPortableContext;
+                                        module.Settings = _settings.GetSettings(EntityNames.Module, module.ModuleId).ToDictionary(x => x.SettingName, x => x.SettingValue);
                                         var moduleobject = ActivatorUtilities.CreateInstance(_serviceProvider, moduletype);
                                         ((IPortable)moduleobject).ImportModule(module, modulecontent.Content, modulecontent.Version);
                                         success = true;

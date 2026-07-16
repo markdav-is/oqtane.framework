@@ -147,8 +147,8 @@
   <data name="Owner.HelpText" xml:space="preserve">
     <value>The owner or creator of the module</value>
   </data>
-  <data name="ReferenceUrl.HelpText" xml:space="preserve">
-    <value>The reference url of the module</value>
+  <data name="Url.HelpText" xml:space="preserve">
+    <value>The url of the module</value>
   </data>
   <data name="Contact.HelpText" xml:space="preserve">
     <value>The contact for the module</value>
@@ -171,8 +171,8 @@
   <data name="Owner.Text" xml:space="preserve">
     <value>Owner: </value>
   </data>
-  <data name="ReferenceUrl.Text" xml:space="preserve">
-    <value>Reference Url: </value>
+  <data name="Url.Text" xml:space="preserve">
+    <value>Url: </value>
   </data>
   <data name="Contact.Text" xml:space="preserve">
     <value>Contact: </value>
@@ -183,8 +183,8 @@
   <data name="Runtimes.Text" xml:space="preserve">
     <value>Runtimes: </value>
   </data>
-  <data name="Definition.Heading" xml:space="preserve">
-    <value>Definition</value>
+  <data name="Module.Heading" xml:space="preserve">
+    <value>Module</value>
   </data>
   <data name="Information.Heading" xml:space="preserve">
     <value>Information</value>
@@ -228,22 +228,16 @@
   <data name="View License" xml:space="preserve">
     <value>View License</value>
   </data>
-  <data name="Error.Validate" xml:space="preserve">
-    <value>Error Validating Package</value>
-  </data>
-  <data name="Message.Download" xml:space="preserve">
-    <value>Package Version Has Been Verified. Please Select The Download Button To Obtain The Package.</value>
-  </data>
-  <data name="Message.Validate" xml:space="preserve">
-    <value>This Package Version Has Not Been Registered In The Oqtane Marketplace Or You Do Not Have The Right To Use It From This Installation</value>
-  </data>
-  <data name="Validate" xml:space="preserve">
-    <value>Validate</value>
-  </data>
   <data name="Browse" xml:space="preserve">
     <value>Browse</value>
   </data>
   <data name="Pages.Heading" xml:space="preserve">
     <value>Pages</value>
+  </data>
+  <data name="Fingerprint.Text" xml:space="preserve">
+    <value>Fingerprint:</value>
+  </data>
+  <data name="Fingerprint.HelpText" xml:space="preserve">
+    <value>A unique identifier for the module's static resources. This value can be changed by clicking the Save option below (ie. cache busting).</value>
   </data>
 </root>

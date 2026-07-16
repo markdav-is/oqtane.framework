@@ -34,7 +34,7 @@ namespace Oqtane.Controllers
             int SiteId;
             if (int.TryParse(siteid, out SiteId) && SiteId == _alias.SiteId)
             {
-                return _visitors.GetVisitors(SiteId, DateTime.ParseExact(fromdate, "yyyy-MM-dd", CultureInfo.InvariantCulture));
+                return _visitors.GetVisitors(SiteId, DateTime.ParseExact(fromdate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal));
             }
             else
             {
@@ -51,11 +51,8 @@ namespace Oqtane.Controllers
             bool authorized = User.IsInRole(RoleNames.Admin);
             if (!authorized)
             {
-                var visitorCookie = Constants.VisitorCookiePrefix + _alias.SiteId.ToString();
-                if (int.TryParse(Request.Cookies[visitorCookie], out int visitorId))
-                {
-                    authorized = (visitorId == id);
-                }
+                var visitorCookieName = Constants.VisitorCookiePrefix + _alias.SiteId.ToString();
+                authorized = (id == GetVisitorCookieId(Request.Cookies[visitorCookieName]));
             }
 
             var visitor = _visitors.GetVisitor(id);
@@ -76,6 +73,18 @@ namespace Oqtane.Controllers
                 }
                 return null;
             }
+        }
+
+        private int GetVisitorCookieId(string visitorCookie)
+        {
+            var visitorId = -1;
+            if (visitorCookie != null)
+            {
+                // visitor cookies now contain the visitor id and an expiry date separated by a pipe symbol
+                visitorCookie = (visitorCookie.Contains("|")) ? visitorCookie.Split('|')[0] : visitorCookie;
+                visitorId = int.TryParse(visitorCookie, out int _visitorId) ? _visitorId : -1;
+            }
+            return visitorId;
         }
     }
 }

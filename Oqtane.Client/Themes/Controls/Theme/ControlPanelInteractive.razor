@@ -11,12 +11,13 @@
 @inject ILogService logger
 @inject ISettingService SettingService
 @inject IJSRuntime jsRuntime
+@inject ISiteGroupService SiteGroupService
 @inject IServiceProvider ServiceProvider
 @inject ILogService LoggingService
 @inject IStringLocalizer<ControlPanelInteractive> Localizer
 @inject IStringLocalizer<SharedResources> SharedLocalizer
 
-<button type="button" class="btn @ButtonClass ms-1" data-bs-toggle="offcanvas" data-bs-target="#offcanvasControlPanel" aria-controls="offcanvasControlPanel" @onclick="ClearMessage">
+<button type="button" class="app-controlpanel btn @ButtonClass ms-1" data-bs-toggle="offcanvas" data-bs-target="#offcanvasControlPanel" aria-controls="offcanvasControlPanel" @onclick="ClearMessage">
     <span class="oi oi-cog"></span>
 </button>
 
@@ -34,6 +35,11 @@
                         <button type="button" data-bs-dismiss="offcanvas" class="btn btn-primary col-12" @onclick=@(async () => Navigate("Admin"))>@Localizer["AdminDash"]</button>
                     </div>
                 </div>
+                @if (_siteGroups.Any(item => (item.Type == SiteGroupTypes.Synchronization || item.Type == SiteGroupTypes.ChangeDetection) && item.PrimarySiteId == PageState.Site.SiteId))
+                {
+                    <hr class="app-rule" />
+                    <button type="button" class="btn btn-secondary col-12 mt-1" @onclick="SynchronizeSite">@Localizer["Synchronize"]</button>
+                }
                 <hr class="app-rule" />
             }
             @if (UserSecurity.IsAuthorized(PageState.User, PermissionNames.Edit, PageState.Page.PermissionList))
@@ -53,18 +59,29 @@
                         <button type="button" class="btn btn-danger col ms-1" @onclick="ConfirmDelete">@SharedLocalizer["Delete"]</button>
                     </div>
                 </div>
-                <div class="row d-flex">
-                    <div class="col">
-                        @if (UserSecurity.ContainsRole(PageState.Page.PermissionList, PermissionNames.View, RoleNames.Everyone))
-                        {
-                            <button type="button" class="btn btn-secondary col-12" @onclick=@(async () => Publish("unpublish"))>@Localizer["Page.Unpublish"]</button>
-                        }
-                        else
-                        {
-                            <button type="button" class="btn btn-secondary col-12" @onclick=@(async () => Publish("publish"))>@Localizer["Page.Publish"]</button>
-                        }
+                @if (PageState.Page.UserId == null)
+                {
+                    <div class="row d-flex mb-2">
+                        <div class="col">
+                            <button type="button" class="btn btn-secondary col-12" data-bs-dismiss="offcanvas" @onclick=@(async () => Navigate("Copy"))>@Localizer["Copy"]</button>
+                        </div>
                     </div>
-                </div>
+                }
+                @if (!PageState.Page.Path.StartsWith("admin/"))
+                {
+                    <div class="row d-flex">
+                        <div class="col">
+                            @if (UserSecurity.ContainsRole(PageState.Page.PermissionList, PermissionNames.View, RoleNames.Everyone))
+                            {
+                                <button type="button" class="btn btn-secondary col-12" @onclick=@(async () => Publish("unpublish"))>@Localizer["Page.Unpublish"]</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-secondary col-12" @onclick=@(async () => Publish("publish"))>@Localizer["Page.Publish"]</button>
+                            }
+                        </div>
+                    </div>
+                }
                 <hr class="app-rule" />
 
                 @if (_deleteConfirmation)
@@ -149,7 +166,7 @@
                                     <option value="@p.PageId">@p.Name</option>
                                 }
                             </select>
-                            <select class="form-select mt-1" @bind="@_moduleId">
+                            <select class="form-select mt-1" value="@_moduleId"  @onchange="(e => PageModuleChanged(e))">
                                 <option value="-">&lt;@Localizer["Module.Select"]&gt;</option>
                                 @foreach (Module module in _modules)
                                 {
@@ -257,6 +274,7 @@
     private List<Page> _pages = new List<Page>();
     private List<Module> _modules = new List<Module>();
     private List<ThemeControl> _containers = new List<ThemeControl>();
+    private List<SiteGroup> _siteGroups = new List<SiteGroup>();
 
     private string _category = "Common";
     private string _pane = "";
@@ -285,15 +303,16 @@
             _containers = ThemeService.GetContainerControls(PageState.Site.Themes, PageState.Page.ThemeType);
             _containerType = PageState.Site.DefaultContainerType;
             _allModuleDefinitions = await ModuleDefinitionService.GetModuleDefinitionsAsync(PageState.Page.SiteId);
-            _moduleDefinitions = _allModuleDefinitions.Where(item => item.Categories.Contains(_category)).ToList();
+            _moduleDefinitions = _allModuleDefinitions.Where(item => item.Categories.Split(',', StringSplitOptions.RemoveEmptyEntries).Contains(_category)).ToList();
             _categories = _allModuleDefinitions.SelectMany(m => m.Categories.Split(',', StringSplitOptions.RemoveEmptyEntries)).Distinct().Where(item => item != "Headless").ToList();
+            _siteGroups = await SiteGroupService.GetSiteGroupsAsync(PageState.Site.SiteId);
         }
     }
 
     private void CategoryChanged(ChangeEventArgs e)
     {
         _category = (string)e.Value;
-        _moduleDefinitions = _allModuleDefinitions.Where(item => item.Categories.Contains(_category)).ToList();
+        _moduleDefinitions = _allModuleDefinitions.Where(item => item.Categories.Split(',', StringSplitOptions.RemoveEmptyEntries).Contains(_category)).ToList();
         _moduleDefinitionName = "-";
         _message = "";
     }
@@ -339,6 +358,20 @@
         StateHasChanged();
     }
 
+    private async Task PageModuleChanged(ChangeEventArgs e)
+    {
+        _moduleId = (string)e.Value;
+        if (_moduleId != "-")
+        {
+            _title = _modules.First(item => item.ModuleId == int.Parse(_moduleId)).Title;
+        }
+        else
+        {
+            _title = "";            
+        }
+        StateHasChanged();
+    }
+
     private async Task AddModule()
     {
         if (UserSecurity.IsAuthorized(PageState.User, PermissionNames.Edit, PageState.Page.PermissionList))
@@ -353,7 +386,7 @@
                     module.PageId = PageState.Page.PageId;
                     module.ModuleDefinitionName = _moduleDefinitionName;
                     module.AllPages = false;
-                    module.PermissionList = GenerateDefaultPermissions(module.SiteId);
+                    module.PermissionList = GenerateDefaultPermissions(module.SiteId, module.ModuleDefinitionName);
 
                     module = await ModuleService.AddModuleAsync(module);
                     newModuleId = module.ModuleId;
@@ -365,7 +398,7 @@
                     module.SiteId = PageState.Page.SiteId;
                     module.PageId = PageState.Page.PageId;
                     module.AllPages = false;
-                    module.PermissionList = GenerateDefaultPermissions(module.SiteId);
+                    module.PermissionList = GenerateDefaultPermissions(module.SiteId, module.ModuleDefinitionName);
 
                     module = await ModuleService.AddModuleAsync(module);
                     var moduleContent = await ModuleService.ExportModuleAsync(int.Parse(_moduleId), PageState.Page.PageId);
@@ -430,9 +463,11 @@
         }
     }
 
-    private List<Permission> GenerateDefaultPermissions(int siteId)
+    private List<Permission> GenerateDefaultPermissions(int siteId, string moduleDefinitionName)
     {
         var permissions = new List<Permission>();
+
+        // set module view permissions
         if (_visibility == "view")
         {
             // set module view permissions to page view permissions
@@ -443,8 +478,22 @@
             // set module view permissions to page edit permissions
             permissions = SetPermissions(permissions, siteId, PermissionNames.View, PermissionNames.Edit);
         }
-        // set module edit permissions to page edit permissions
-        permissions = SetPermissions(permissions, siteId, PermissionNames.Edit, PermissionNames.Edit);
+
+        // set remaining module permissions
+        var permissionNames = PermissionNames.Edit;
+        var moduleDefinition = _allModuleDefinitions.FirstOrDefault(item => item.ModuleDefinitionName == moduleDefinitionName);
+        if (moduleDefinition != null && !string.IsNullOrEmpty(moduleDefinition.PermissionNames))
+        {
+            permissionNames = moduleDefinition.PermissionNames; // custom module permissions
+        }
+        foreach (var permission in permissionNames.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (permission != PermissionNames.View)
+            {
+                // set module permissions to page edit permissions
+                permissions = SetPermissions(permissions, siteId, permission, PermissionNames.Edit);
+            }
+        }
 
         return permissions;
     }
@@ -473,6 +522,11 @@
                 // get page management moduleid
                 moduleId = int.Parse(PageState.Site.Settings[Constants.PageManagementModule]);
                 NavigationManager.NavigateTo(Utilities.EditUrl(PageState.Alias.Path, "admin/pages", moduleId, location, $"id={PageState.Page.PageId}&returnurl={WebUtility.UrlEncode(PageState.Route.PathAndQuery)}"));
+                break;
+            case "Copy":
+                // get page management moduleid
+                moduleId = int.Parse(PageState.Site.Settings[Constants.PageManagementModule]);
+                NavigationManager.NavigateTo(Utilities.EditUrl(PageState.Alias.Path, "admin/pages", moduleId, "Edit", $"id={PageState.Page.PageId}&copy=true&returnurl={WebUtility.UrlEncode(PageState.Route.PathAndQuery)}"));
                 break;
         }
     }
@@ -548,7 +602,7 @@
     // the following code is duplicated from LoginBase
     private async Task LogoutUser()
     {
-        await LoggingService.Log(PageState.Alias, PageState.Page.PageId, null, PageState.User?.UserId, GetType().AssemblyQualifiedName, "Logout", LogFunction.Security, LogLevel.Information, null, "User Logout For Username {Username}", PageState.User?.Username);
+        await LoggingService.Log(PageState.Alias, PageState.Page.PageId, null, PageState.User?.UserId, GetType().AssemblyQualifiedName, "Logout", PageState.RemoteIPAddress, LogFunction.Security, LogLevel.Information, null, "User Logout For Username {Username}", PageState.User?.Username);
 
         Route route = new Route(PageState.Uri.AbsoluteUri, PageState.Alias.Path);
         var url = route.PathAndQuery;
@@ -573,7 +627,7 @@
         else
         {
             // post to the Logout page to complete the logout process
-            var fields = new { __RequestVerificationToken = SiteState.AntiForgeryToken, returnurl = url };
+            var fields = new { __RequestVerificationToken = SiteState.AntiForgeryToken, returnurl = url, everywhere = bool.Parse(SettingService.GetSetting(PageState.Site.Settings, "LoginOptions:LogoutEverywhere", "false")) };
             var interop = new Interop(jsRuntime);
             await interop.SubmitForm(Utilities.TenantUrl(PageState.Alias, "/pages/logout/"), fields);
         }
@@ -614,5 +668,15 @@
     private void ClearMessage()
     {
         _message = "";
+    }
+
+    private async Task SynchronizeSite()
+    {
+        foreach (var group in _siteGroups.Where(item => (item.Type == SiteGroupTypes.Synchronization || item.Type == SiteGroupTypes.ChangeDetection) && item.PrimarySiteId == PageState.Site.SiteId))
+        {
+            group.Synchronize = true;
+            await SiteGroupService.UpdateSiteGroupAsync(group);
+        }
+        NavigationManager.NavigateTo(Utilities.NavigateUrl(PageState.Alias.Path, PageState.Page.Path, ""), true);
     }
 }

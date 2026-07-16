@@ -37,6 +37,19 @@ namespace Oqtane.UI
             }
         }
 
+        public Task SetCookieString(string cookieString)
+        {
+            try
+            {
+                _jsRuntime.InvokeVoidAsync("Oqtane.Interop.setCookieString", cookieString);
+                return Task.CompletedTask;
+            }
+            catch
+            {
+                return Task.CompletedTask;
+            }
+        }
+
         public ValueTask<string> GetCookie(string name)
         {
             try
@@ -211,17 +224,17 @@ namespace Oqtane.UI
 
         public Task UploadFiles(string posturl, string folder, string id, string antiforgerytoken, string jwt)
         {
-            UploadFiles(posturl, folder, id, antiforgerytoken, jwt, 1);
+            UploadFiles(posturl, folder, id, antiforgerytoken, jwt, 1, false);
             return Task.CompletedTask;
         }
 
-        public ValueTask<bool> UploadFiles(string posturl, string folder, string id, string antiforgerytoken, string jwt, int chunksize, CancellationToken cancellationToken = default)
+        public ValueTask<bool> UploadFiles(string posturl, string folder, string id, string antiforgerytoken, string jwt, int chunksize, bool anonymizeuploadfilenames, CancellationToken cancellationToken = default)
         {
             try
             {
                 return _jsRuntime.InvokeAsync<bool>(
                     "Oqtane.Interop.uploadFiles", cancellationToken,
-                    posturl, folder, id, antiforgerytoken, jwt, chunksize);
+                    posturl, folder, id, antiforgerytoken, jwt, chunksize, anonymizeuploadfilenames);
             }
             catch
             {
@@ -404,5 +417,30 @@ namespace Oqtane.UI
                 return Task.CompletedTask;
             }
         }
+
+        public ValueTask<string> CreateCredential(string optionsResponse)
+        {
+            try
+            {
+                return _jsRuntime.InvokeAsync<string>("Oqtane.Interop.createCredential", optionsResponse);
+            }
+            catch
+            {
+                return new ValueTask<string>(Task.FromResult(string.Empty));
+            }
+        }
+
+        public ValueTask<string> RequestCredential(string optionsResponse)
+        {
+            try
+            {
+                return _jsRuntime.InvokeAsync<string>("Oqtane.Interop.requestCredential", optionsResponse);
+            }
+            catch
+            {
+                return new ValueTask<string>(Task.FromResult(string.Empty));
+            }
+        }
+
     }
 }

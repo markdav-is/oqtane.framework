@@ -31,6 +31,10 @@ namespace Oqtane.Extensions
             builder.AddSiteNamedOptions<CookieAuthenticationOptions>(Constants.AuthenticationScheme, (options, alias, sitesettings) =>
             {
                 options.Cookie.Name = sitesettings.GetValue("LoginOptions:CookieName", ".AspNetCore.Identity.Application");
+                if (!string.IsNullOrEmpty(sitesettings.GetValue("LoginOptions:CookieDomain", "")))
+                {
+                    options.Cookie.Domain = sitesettings.GetValue("LoginOptions:CookieDomain", "");
+                }
                 string cookieExpStr = sitesettings.GetValue("LoginOptions:CookieExpiration", "");
                 if (!string.IsNullOrEmpty(cookieExpStr) && TimeSpan.TryParse(cookieExpStr, out TimeSpan cookieExpTS))
                 {
@@ -61,6 +65,7 @@ namespace Oqtane.Extensions
                     options.ClientId = sitesettings.GetValue("ExternalLogin:ClientId", "");
                     options.ClientSecret = sitesettings.GetValue("ExternalLogin:ClientSecret", "");
                     options.ResponseType = sitesettings.GetValue("ExternalLogin:AuthResponseType", "code"); // default is authorization code flow
+                    options.ProtocolValidator.RequireNonce = bool.Parse(sitesettings.GetValue("ExternalLogin:RequireNonce", "true"));
                     options.UsePkce = bool.Parse(sitesettings.GetValue("ExternalLogin:PKCE", "false"));
                     options.SaveTokens = bool.Parse(sitesettings.GetValue("ExternalLogin:SaveTokens", "false"));
                     if (!string.IsNullOrEmpty(sitesettings.GetValue("ExternalLogin:RoleClaimType", "")))
@@ -79,16 +84,13 @@ namespace Oqtane.Extensions
                     options.Events.OnRemoteFailure = OnRemoteFailure;
                     if (sitesettings.GetValue("ExternalLogin:Parameters", "") != "")
                     {
-                        options.Events = new OpenIdConnectEvents
+                        options.Events.OnRedirectToIdentityProvider = context =>
                         {
-                            OnRedirectToIdentityProvider = context =>
+                            foreach (var parameter in sitesettings.GetValue("ExternalLogin:Parameters", "").Split(","))
                             {
-                                foreach (var parameter in sitesettings.GetValue("ExternalLogin:Parameters", "").Split(","))
-                                {
-                                    context.ProtocolMessage.SetParameter(parameter.Split("=")[0], parameter.Split("=")[1]);
-                                }
-                                return Task.FromResult(0);
+                                context.ProtocolMessage.SetParameter(parameter.Split("=")[0], parameter.Split("=")[1]);
                             }
+                            return Task.FromResult(0);
                         };
                     }
                 }
@@ -127,18 +129,15 @@ namespace Oqtane.Extensions
                     options.Events.OnRemoteFailure = OnRemoteFailure;
                     if (sitesettings.GetValue("ExternalLogin:Parameters", "") != "")
                     {
-                        options.Events = new OAuthEvents
+                        options.Events.OnRedirectToAuthorizationEndpoint = context =>
                         {
-                            OnRedirectToAuthorizationEndpoint = context =>
+                            var url = context.RedirectUri;
+                            foreach (var parameter in sitesettings.GetValue("ExternalLogin:Parameters", "").Split(","))
                             {
-                                var url = context.RedirectUri;
-                                foreach (var parameter in sitesettings.GetValue("ExternalLogin:Parameters", "").Split(","))
-                                {
-                                    url += (!url.Contains("?")) ? "?" + parameter : "&" + parameter;
-                                }
-                                context.Response.Redirect(url);
-                                return Task.FromResult(0);
+                                url += (!url.Contains("?")) ? "?" + parameter : "&" + parameter;
                             }
+                            context.Response.Redirect(url);
+                            return Task.FromResult(0);
                         };
                     }
                 }
@@ -362,6 +361,18 @@ namespace Oqtane.Extensions
                 {
                     user = _users.GetUser(identityuser.UserName);
                     user.SiteId = alias.SiteId;
+                    if ((!string.IsNullOrEmpty(email) && user.Email != email) || (!string.IsNullOrEmpty(name) && user.DisplayName != name))
+                    {
+                        // synchronize email and displayname
+                        user.Email = !string.IsNullOrEmpty(email) ? email : user.Email;
+                        user.DisplayName = !string.IsNullOrEmpty(name) ? name : user.DisplayName;
+                        _users.UpdateUser(user);
+                        if (identityuser.Email != user.Email)
+                        {
+                            identityuser.Email = user.Email;
+                            await _identityUserManager.UpdateAsync(identityuser); // security stamp not updated
+                        }
+                    }
                 }
                 else
                 {
@@ -404,13 +415,13 @@ namespace Oqtane.Extensions
                                 else if (!string.IsNullOrEmpty(name)) // name claim provided
                                 {
                                     username = name.ToLower().Replace(" ", "") + DateTime.UtcNow.ToString("mmss");
-                                    emailaddress = ""; // unknown - will need to be requested from user later
+                                    emailaddress = username + "@unknown.com";
                                     displayname = name;
                                 }
                                 else // neither email nor name provided
                                 {
                                     username = Guid.NewGuid().ToString("N"); 
-                                    emailaddress = ""; // unknown - will need to be requested from user later
+                                    emailaddress = username + "@unknown.com";
                                     displayname = username;
                                 }
 
@@ -476,8 +487,26 @@ namespace Oqtane.Extensions
                     else
                     {
                         var logins = await _identityUserManager.GetLoginsAsync(identityuser);
-                        var login = logins.FirstOrDefault(item => item.LoginProvider == (providerType + ":" + alias.SiteId.ToString()));
-                        if (login == null)
+                        // check if any logins exist for this user and provider type for any site
+                        var login = logins.FirstOrDefault(item => item.LoginProvider.StartsWith(providerType));
+                        if (login != null || !bool.Parse(httpContext.GetSiteSettings().GetValue("ExternalLogin:VerifyUsers", "true")))
+                        {
+                            // external login using existing user account - link automatically
+                            user = _users.GetUser(identityuser.UserName);
+                            user.SiteId = alias.SiteId;
+
+                            var _notifications = httpContext.RequestServices.GetRequiredService<INotificationRepository>();
+                            string url = httpContext.Request.Scheme + "://" + alias.Name;
+                            string body = "You Recently Used An External Account To Sign In To Our Site.\n\n" + url + "\n\nThank You!";
+                            var notification = new Notification(user.SiteId, user, "User Account Notification", body);
+                            _notifications.AddNotification(notification);
+
+                            // add user login
+                            await _identityUserManager.AddLoginAsync(identityuser, new UserLoginInfo(providerType + ":" + user.SiteId.ToString(), id, providerName));
+
+                            _logger.Log(user.SiteId, LogLevel.Information, "ExternalLogin", Enums.LogFunction.Create, "External Login Linkage Created For User {Username} And Provider {Provider}", user.Username, providerName);
+                        }
+                        else
                         {
                             if (bool.Parse(httpContext.GetSiteSettings().GetValue("ExternalLogin:VerifyUsers", "true")))
                             {
@@ -496,27 +525,10 @@ namespace Oqtane.Extensions
                             }
                             else
                             {
-                                // external login using existing user account - link automatically
-                                user = _users.GetUser(identityuser.UserName);
-                                user.SiteId = alias.SiteId;
-
-                                var _notifications = httpContext.RequestServices.GetRequiredService<INotificationRepository>();
-                                string url = httpContext.Request.Scheme + "://" + alias.Name;
-                                string body = "You Recently Used An External Account To Sign In To Our Site.\n\n" + url + "\n\nThank You!";
-                                var notification = new Notification(user.SiteId, user, "User Account Notification", body);
-                                _notifications.AddNotification(notification);
-
-                                // add user login
-                                await _identityUserManager.AddLoginAsync(identityuser, new UserLoginInfo(providerType + ":" + user.SiteId.ToString(), id, providerName));
-
-                                _logger.Log(user.SiteId, LogLevel.Information, "ExternalLogin", Enums.LogFunction.Create, "External Login Linkage Created For User {Username} And Provider {Provider}", user.Username, providerName);
+                                // provider keys do not match
+                                identity.Label = ExternalLoginStatus.ProviderKeyMismatch;
+                                _logger.Log(LogLevel.Error, "ExternalLogin", Enums.LogFunction.Security, "Provider Key Does Not Match For User {Username}. Login Denied.", identityuser.UserName);
                             }
-                        }
-                        else
-                        {
-                            // provider keys do not match
-                            identity.Label = ExternalLoginStatus.ProviderKeyMismatch;
-                            _logger.Log(LogLevel.Error, "ExternalLogin", Enums.LogFunction.Security, "Provider Key Does Not Match For User {Username}. Login Denied.", identityuser.UserName);
                         }
                     }
                 }
@@ -525,15 +537,36 @@ namespace Oqtane.Extensions
                 if (user != null)
                 {
                     // manage roles
+                    var _roles = httpContext.RequestServices.GetRequiredService<IRoleRepository>();
                     var _userRoles = httpContext.RequestServices.GetRequiredService<IUserRoleRepository>();
                     var userRoles = _userRoles.GetUserRoles(user.UserId, user.SiteId).ToList();
+
+                    // if user is signing in to a new site
+                    if (userRoles.Count == 0)
+                    {
+                        // add auto assigned roles to user for site
+                        var roles = _roles.GetRoles(user.SiteId).Where(item => item.IsAutoAssigned).ToList();
+                        foreach (var role in roles)
+                        {
+                            var userrole = new UserRole();
+                            userrole.UserId = user.UserId;
+                            userrole.RoleId = role.RoleId;
+                            userrole.EffectiveDate = null;
+                            userrole.ExpiryDate = null;
+                            userrole.IgnoreSecurityStamp = true;
+                            _userRoles.AddUserRole(userrole);
+                        }
+                        userRoles = _userRoles.GetUserRoles(user.UserId, user.SiteId).ToList();
+                    }
+
+                    // process any role claims
                     if (!string.IsNullOrEmpty(httpContext.GetSiteSettings().GetValue("ExternalLogin:RoleClaimType", "")))
                     {
                         // external roles
                         if (claimsPrincipal.Claims.Any(item => item.Type == httpContext.GetSiteSettings().GetValue("ExternalLogin:RoleClaimType", "")))
                         {
-                            var _roles = httpContext.RequestServices.GetRequiredService<IRoleRepository>();                            
-                            var roles = _roles.GetRoles(user.SiteId).ToList(); // global roles excluded ie. host users cannot be added/deleted
+                            var allowhostrole = bool.Parse(httpContext.GetSiteSettings().GetValue("ExternalLogin:AllowHostRole", "false"));
+                            var roles = _roles.GetRoles(user.SiteId, allowhostrole).ToList();
 
                             var mappings = httpContext.GetSiteSettings().GetValue("ExternalLogin:RoleClaimMappings", "").Split(',');
                             foreach (var claim in claimsPrincipal.Claims.Where(item => item.Type == httpContext.GetSiteSettings().GetValue("ExternalLogin:RoleClaimType", "")))
@@ -583,8 +616,9 @@ namespace Oqtane.Extensions
                         }
                     }
 
-                    var userrole = userRoles.FirstOrDefault(item => item.Role.Name == RoleNames.Registered);
-                    if (!user.IsDeleted && userrole != null && Utilities.IsEffectiveAndNotExpired(userrole.EffectiveDate, userrole.ExpiryDate))
+                    var host = userRoles.FirstOrDefault(item => item.Role.Name == RoleNames.Host);
+                    var registered = userRoles.FirstOrDefault(item => item.Role.Name == RoleNames.Registered);
+                    if (!user.IsDeleted && (host != null || registered != null && Utilities.IsEffectiveAndNotExpired(registered.EffectiveDate, registered.ExpiryDate)))
                     {
                         // update user
                         user.LastLoginOn = DateTime.UtcNow;
@@ -648,12 +682,12 @@ namespace Oqtane.Extensions
                         var _syncManager = httpContext.RequestServices.GetRequiredService<ISyncManager>();
                         _syncManager.AddSyncEvent(alias, EntityNames.User, user.UserId, "Login");
 
-                        _logger.Log(LogLevel.Information, "ExternalLogin", Enums.LogFunction.Security, "External User Login Successful For {Username} From IP Address {IPAddress} Using Provider {Provider}", user.Username, httpContext.Connection.RemoteIpAddress.ToString(), providerName);
+                        _logger.Log(LogLevel.Information, "ExternalLogin", Enums.LogFunction.Security, "External Login Successful For {Username} From IP Address {IPAddress} Using Provider {Provider}", user.Username, httpContext.Connection.RemoteIpAddress.ToString(), providerName);
                     }
                     else
                     {
                         identity.Label = ExternalLoginStatus.AccessDenied;
-                        _logger.Log(LogLevel.Error, "ExternalLogin", Enums.LogFunction.Security, "External User Login Denied For {Username}. User Account Is Deleted Or Not An Active Member Of Site {SiteId}.", user.Username, user.SiteId);
+                        _logger.Log(LogLevel.Error, "ExternalLogin", Enums.LogFunction.Security, "External Login Denied For {Username}. User Account Is Deleted Or Not An Active Member Of Site {SiteId}.", user.Username, user.SiteId);
                     }
                 }
             }

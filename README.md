@@ -12,25 +12,50 @@ Oqtane is being developed based on some fundamental principles which are outline
 
 # Latest Release
 
-[6.0.1](https://github.com/oqtane/oqtane.framework/releases/tag/v6.0.1) was released on December 20, 2024 and is a maintenance release including 58 pull requests by 7 different contributors, pushing the total number of project commits all-time to over 6100. The Oqtane framework continues to evolve at a rapid pace to meet the needs of .NET developers.
+[10.2.1](https://github.com/oqtane/oqtane.framework/releases/tag/v10.2.1) was released on June 19, 2026.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Foqtane%2Foqtane.framework%2Fmaster%2Fazuredeploy.json)
+# Try It Now!
 
-# Getting Started (Version 6.x)
+Microsoft's Public Cloud (requires an Azure account)  
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Foqtane%2Foqtane.framework%2Fmaster%2Fazuredeploy.json) 
+
+A free ASP.NET hosting account. No hidden fees. No credit card required.  
+[![Deploy to MonsterASP.NET](https://www.oqtane.org/files/Public/MonsterASPNET.png)](https://www.monsterasp.net/) 
+
+# Getting Started (Version 10.0.0+)
+
+**Installing using the Oqtane Application Template:**
+
+If you have an older version of the Oqtane Application Template installed and want to use the latest, use the following .NET CLI command to uninstall the old version:
+```
+dotnet new uninstall Oqtane.Application.Template
+```
+To install the Oqtane Application Template and create a new project, use the following .NET CLI commands (note that "MyCompany.MyProject" can be replaced with your own unique company and project name):
+
+```
+dotnet new install Oqtane.Application.Template
+dotnet new oqtane-app -o MyCompany.MyProject 
+cd MyCompany.MyProject
+dotnet build
+cd Server
+dotnet run
+```
+
+- Browse to the Url specified to run the application (an Installation Wizard screen will be displayed the first time you run the application)
+- To develop/debug the application in an IDE, open the *.slnx file in the root folder and hit F5
 
 **Installing using source code from the Dev/Master branch:**
 
-- Install **[.NET 9.0.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)**.
+- Install Latest **[.NET  10.0 SDK](https://dotnet.microsoft.com/en-us/download)**.
 
-- Install the latest edition (v17.12 or higher) of [Visual Studio 2022](https://visualstudio.microsoft.com/downloads) with the **ASP.NET and web development** workload enabled. Oqtane works with ALL editions of Visual Studio from Community to Enterprise. If you wish to use LocalDB for development ( not a requirement as Oqtane supports SQLite, mySQL, and PostgreSQL ) you must also install the **Data storage and processing**.  
+- Install the latest edition of [Visual Studio 2026](https://visualstudio.microsoft.com/downloads) with the **ASP.NET and web development** workload enabled. Oqtane works with ALL editions of Visual Studio from Community to Enterprise. If you wish to use LocalDB for development ( not a requirement as Oqtane supports SQLite, mySQL, and PostgreSQL ) you must also install the **Data storage and processing**.  
 
-- Clone (or download) the Oqtane Master or Dev branch source code to your local system.
+- Clone (or download) the Oqtane source code to your local system:
 
-- Open the **Oqtane.sln** solution file.
+  - Dev Branch: git clone https://github.com/oqtane/oqtane.framework
+  - Master Branch: git clone --single-branch --branch master https://github.com/oqtane/oqtane.framework
 
-- **Important:** Rebuild the entire solution before running it (ie. Build / Rebuild Solution).
-  
-- Make sure you specify Oqtane.Server as the Startup Project.
+- Open the **Oqtane.slnx** solution file (make sure you specify Oqtane.Server as the Startup Project)
 
 - Run the application... an Installation Wizard screen will be displayed which will allow you to configure your preferred database and create a host user account.
 
@@ -63,7 +88,7 @@ Oqtane is being developed based on some fundamental principles which are outline
 
 - If you have already installed a previous version of Oqtane and you wish to do a clean database install, simply reset the DefaultConnection value in the Oqtane.Server\appsettings.json file to "". This will trigger a re-install when you run the application which will execute the database installation.
    
-- If you want to submit pull requests make sure you install the [Github Extension For Visual Studio](https://visualstudio.github.com/). It is recommended you ignore any local changes you have made to the appsettings.json file before you submit a pull request. To automate this activity, open a command prompt and navigate to the /Oqtane.Server/ folder and enter the command "git update-index --skip-worktree appsettings.json" 
+- If you want to submit pull requests it is recommended you ignore any local changes you have made to the appsettings.json file before you submit a pull request. To automate this activity, open a command prompt and navigate to the /Oqtane.Server/ folder and enter the command "git update-index --skip-worktree appsettings.json" 
 
 **Video Series**
 
@@ -85,10 +110,82 @@ Connect with other developers, get support, and share ideas by joining the Oqtan
 
 # Roadmap
 This project is open source, and therefore is a work in progress...
-      
+
+Backlog
+- [ ] Native MCP Server
+
+[10.2.1](https://github.com/oqtane/oqtane.framework/releases/tag/v10.2.1) (Jun 19, 2026)
+- [x] Stabilization improvements
+
+[10.2.0](https://github.com/oqtane/oqtane.framework/releases/tag/v10.2.0) (May 29, 2026)
+- [x] Distributed Caching
+- [x] Scale-out Support
+- [x] Docker Support 
+
+[10.1.2](https://github.com/oqtane/oqtane.framework/releases/tag/v10.1.2) (Mar 26, 2026)
+- [x] Stabilization improvements
+
+[10.1.1](https://github.com/oqtane/oqtane.framework/releases/tag/v10.1.1) (Mar 6, 2026)
+- [x] Stabilization improvements
+
+[10.1.0](https://github.com/oqtane/oqtane.framework/releases/tag/v10.1.0) (Feb 25, 2026)
+- [x] Site Groups, Content Synchronization, Content Localization
+- [x] Global Replace
+- [x] Copy Page
+- [x] Site Tasks 
+
+[10.0.4](https://github.com/oqtane/oqtane.framework/releases/tag/v10.0.4) (Jan 20, 2026)
+- [x] Stabilization improvements
+
+[10.0.3](https://github.com/oqtane/oqtane.framework/releases/tag/v10.0.3) (Dec 24, 2025)
+- [x] Stabilization improvements
+
+[10.0.2](https://github.com/oqtane/oqtane.framework/releases/tag/v10.0.2) (Dec 23, 2025)
+- [x] Stabilization improvements
+
+[10.0.1](https://github.com/oqtane/oqtane.framework/releases/tag/v10.0.1) (Dec 15, 2025)
+- [x] Stabilization improvements
+
+[10.0.0](https://github.com/oqtane/oqtane.framework/releases/tag/v10.0.0) (Nov 14, 2025)
+- [x] Migration to .NET 10
+- [x] Passkey Authentication
+
+[6.2.1](https://github.com/oqtane/oqtane.framework/releases/tag/v6.2.1) (Sep 29, 2025)
+- [x] Stabilization improvements
+
+[6.2.0](https://github.com/oqtane/oqtane.framework/releases/tag/v6.2.0) (Sep 9, 2025)
+- [x] Oqtane Application Template
+- [x] Radzen Text Editor
+- [x] Setting Management
+
+[6.1.5](https://github.com/oqtane/oqtane.framework/releases/tag/v6.1.5) (Aug 17, 2025)
+- [x] Stabilization improvements
+- [x] Database provider improvements
+
+[6.1.4](https://github.com/oqtane/oqtane.framework/releases/tag/v6.1.4) (Jul 30, 2025)
+- [x] Stabilization improvements
+- [x] SMTP OAuth2 Support
+
+[6.1.3](https://github.com/oqtane/oqtane.framework/releases/tag/v6.1.3) (May 29, 2025)
+- [x] Stabilization improvements
+- [x] Time zone support
+- [x] Module header/footer content
+- [x] Module import/export from files
+
+[6.1.2](https://github.com/oqtane/oqtane.framework/releases/tag/v6.1.2) (Apr 10, 2025)
+- [x] Stabilization improvements
+
+[6.1.1](https://github.com/oqtane/oqtane.framework/releases/tag/v6.1.1) (Mar 12, 2025)
+- [x] Stabilization improvements
+- [x] Cookie Consent Banner & Privacy/Terms
+
+[6.1.0](https://github.com/oqtane/oqtane.framework/releases/tag/v6.1.0) (Feb 11, 2025)
+- [x] Static Asset / Folder Asset Caching
+- [x] JavaScript improvements in Blazor Static Server Rendering (SSR)
+- [x] User Impersonation
+
 [6.0.1](https://github.com/oqtane/oqtane.framework/releases/tag/v6.0.1) (Dec 20, 2024)
 - [x] Stabilization improvements
-- [x] JavaScript improvements in Blazor Static Server Rendering (SSR) 
 
 [6.0.0](https://github.com/oqtane/oqtane.framework/releases/tag/v6.0.0) (Nov 14, 2024)
 - [x] Migration to .NET 9
@@ -135,7 +232,7 @@ This project is open source, and therefore is a work in progress...
 ➡️ Full list and older versions can be found in the [docs roadmap](https://docs.oqtane.org/guides/roadmap/index.html)
 
 # Background
-Oqtane was created by [Shaun Walker](https://www.linkedin.com/in/shaunbrucewalker/) and is inspired by the DotNetNuke web application framework. Oqtane is a native Blazor application written from the ground up using modern .NET Core technology and a Single Page Application (SPA) architecture. It is a modular application framework offering a fully dynamic page compositing model, multi-site support, designer friendly themes, and extensibility via third party modules.
+Oqtane was created by [Shaun Walker](https://www.linkedin.com/in/shaunbrucewalker/) and was inspired by his earlier efforts creating the DotNetNuke web application framework for the .NET Framework. Oqtane is a native Blazor application written from the ground up using modern .NET Core technology and a Single Page Application (SPA) architecture. It is a modular application framework offering a fully dynamic page compositing model, multi-site support, designer friendly themes, and extensibility via third party modules.
 
 # Reference Implementations
 
@@ -151,7 +248,7 @@ The following diagram visualizes the client and server components in the Oqtane 
 
 # Databases
 
-As of version 2.1 (June 2021) Oqtane supports multiple relational database providers - SQL Server, SQLite, MySQL, PostgreSQL
+Oqtane supports multiple relational database providers - SQL Server, SQLite, MySQL, PostgreSQL
 
 ![Databases](https://github.com/oqtane/framework/blob/dev/screenshots/databases.png?raw=true "Oqtane Databases")
 

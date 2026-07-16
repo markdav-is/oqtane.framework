@@ -2,18 +2,26 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
+using Oqtane.Infrastructure;
 using Oqtane.Models;
 using Oqtane.Shared;
 
 namespace Oqtane.Repository
 {
+    public interface ITenantRepository
+    {
+        IEnumerable<Tenant> GetTenants();
+        Tenant AddTenant(Tenant tenant);
+        Tenant UpdateTenant(Tenant tenant);
+        Tenant GetTenant(int tenantId);
+        void DeleteTenant(int tenantId);
+    }
     public class TenantRepository : ITenantRepository
     {
         private MasterDBContext _db;
-        private readonly IMemoryCache _cache;
+        private readonly ICacheManager _cache;
 
-        public TenantRepository(MasterDBContext context, IMemoryCache cache)
+        public TenantRepository(MasterDBContext context, ICacheManager cache)
         {
             _db = context;
             _cache = cache;
@@ -21,9 +29,8 @@ namespace Oqtane.Repository
 
         public IEnumerable<Tenant> GetTenants()
         {
-            return _cache.GetOrCreate("tenants", entry =>
+            return _cache.GetCache("Tenants", entry =>
             {
-                entry.SlidingExpiration = TimeSpan.FromMinutes(30);
                 return _db.Tenant.ToList();
             });
         }
@@ -32,7 +39,7 @@ namespace Oqtane.Repository
         {
             _db.Tenant.Add(tenant);
             _db.SaveChanges();
-            _cache.Remove("tenants");
+            _cache.RemoveCache("Tenants");
             return tenant;
         }
 
@@ -47,7 +54,7 @@ namespace Oqtane.Repository
             
             _db.Entry(tenant).State = EntityState.Modified;
             _db.SaveChanges();
-            _cache.Remove("tenants");
+            _cache.RemoveCache("Tenants");
             return tenant;
         }
 
@@ -65,7 +72,7 @@ namespace Oqtane.Repository
                 _db.SaveChanges();
             }
 
-            _cache.Remove("tenants");
+            _cache.RemoveCache("Tenants");
         }
     }
 }

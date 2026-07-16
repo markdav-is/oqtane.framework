@@ -4,9 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Reflection.Metadata;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 using Oqtane.Infrastructure;
 using Oqtane.Models;
 using Oqtane.Shared;
@@ -14,28 +12,37 @@ using Oqtane.Themes;
 
 namespace Oqtane.Repository
 {
+    public interface IThemeRepository
+    {
+        IEnumerable<Theme> GetThemes(int siteId);
+        Theme GetTheme(int themeId, int siteId);
+        void UpdateTheme(Theme theme);
+        void DeleteTheme(int themeId);
+        List<Theme> FilterThemes(List<Theme> themes);
+        List<string> GetAssemblies(int siteId);
+    }
+
     public class ThemeRepository : IThemeRepository
     {
         private MasterDBContext _db;
-        private readonly IMemoryCache _cache;
+        private readonly ICacheManager _cache;
+        private readonly IPermissionRepository _permissions;
         private readonly ITenantManager _tenants;
         private readonly ISettingRepository _settings;
-        private readonly IServerStateManager _serverState;
         private readonly string settingprefix = "SiteEnabled:";
 
-        public ThemeRepository(MasterDBContext context, IMemoryCache cache, ITenantManager tenants, ISettingRepository settings, IServerStateManager serverState)
+        public ThemeRepository(MasterDBContext context, ICacheManager cache, IPermissionRepository permissions, ITenantManager tenants, ISettingRepository settings)
         {
             _db = context;
             _cache = cache;
+            _permissions = permissions;
             _tenants = tenants;
             _settings = settings;
-            _serverState = serverState;
         }
 
-        public IEnumerable<Theme> GetThemes()
+        public IEnumerable<Theme> GetThemes(int siteId)
         {
-            // for consistency siteid should be passed in as parameter, but this would require breaking change
-            return LoadThemes(_tenants.GetAlias().SiteId);
+            return LoadThemes(siteId);
         }
 
         public Theme GetTheme(int themeId, int siteId)
@@ -48,6 +55,7 @@ namespace Oqtane.Repository
         {
             _db.Entry(theme).State = EntityState.Modified;
             _db.SaveChanges();
+            _permissions.UpdatePermissions(theme.SiteId, EntityNames.Theme, theme.ThemeId, theme.PermissionList);
 
             var settingname = $"{settingprefix}{_tenants.GetAlias().SiteKey}";
             var setting = _settings.GetSetting(EntityNames.Theme, theme.ThemeId, settingname);
@@ -61,7 +69,7 @@ namespace Oqtane.Repository
                 _settings.UpdateSetting(setting);
             }
 
-            _cache.Remove($"themes:{_tenants.GetAlias().SiteKey}");
+            _cache.RemoveCache(_tenants.GetAlias(), "Themes");
         }
 
         public void DeleteTheme(int themeId)
@@ -70,7 +78,7 @@ namespace Oqtane.Repository
             _settings.DeleteSettings(EntityNames.Theme, themeId);
             _db.Theme.Remove(theme);
             _db.SaveChanges();
-            _cache.Remove($"themes:{_tenants.GetAlias().SiteKey}");
+            _cache.RemoveCache(_tenants.GetAlias(), "Themes");
         }
 
         public List<Theme> FilterThemes(List<Theme> themes)
@@ -88,21 +96,48 @@ namespace Oqtane.Repository
                 Theme.ThemeSettingsType = theme.ThemeSettingsType;
                 Theme.ContainerSettingsType = theme.ContainerSettingsType;
                 Theme.PackageName = theme.PackageName;
-                Theme.Fingerprint = Utilities.GenerateSimpleHash(theme.ModifiedOn.ToString("yyyyMMddHHmm"));
+                Theme.PermissionList = theme.PermissionList;
+                Theme.Fingerprint = theme.Fingerprint;
                 Themes.Add(Theme);
             }
 
             return Themes;
         }
 
+        public List<string> GetAssemblies(int siteId)
+        {
+            var assemblies = new List<string>();
+            foreach (var moduleDefinition in GetThemes(siteId))
+            {
+                if (moduleDefinition.IsEnabled)
+                {
+                    // build list of assemblies for site
+                    if (!assemblies.Contains(moduleDefinition.AssemblyName))
+                    {
+                        assemblies.Add(moduleDefinition.AssemblyName);
+                    }
+                    if (!string.IsNullOrEmpty(moduleDefinition.Dependencies))
+                    {
+                        foreach (var assembly in moduleDefinition.Dependencies.Replace(".dll", "").Split(',', StringSplitOptions.RemoveEmptyEntries).Reverse())
+                        {
+                            if (!assemblies.Contains(assembly.Trim()))
+                            {
+                                assemblies.Insert(0, assembly.Trim());
+                            }
+                        }
+                    }
+                }
+            }
+            return assemblies;
+        }
+
         private List<Theme> LoadThemes(int siteId)
         {
             // get themes
-            List<Theme> themes = _cache.GetOrCreate($"themes:{_tenants.GetAlias().SiteKey}", entry =>
+            List<Theme> themes = _cache.GetCache(_tenants.GetAlias(), "Themes", entry =>
             {
-                entry.Priority = CacheItemPriority.NeverRemove;
                 return ProcessThemes(siteId);
-            });
+            }, TimeSpan.MaxValue, TimeSpan.MinValue); // skip distributed caching as app restart must reload themes
 
             return themes;
         }
@@ -154,6 +189,7 @@ namespace Oqtane.Repository
                 Theme.CreatedOn = theme.CreatedOn;
                 Theme.ModifiedBy = theme.ModifiedBy;
                 Theme.ModifiedOn = theme.ModifiedOn;
+                Theme.Fingerprint = Utilities.GenerateSimpleHash(theme.ModifiedOn.ToString("yyyyMMddHHmm"));
             }
 
             // any remaining themes are orphans
@@ -166,7 +202,9 @@ namespace Oqtane.Repository
             if (siteId != -1)
             {
                 var siteKey = _tenants.GetAlias().SiteKey;
-                var assemblies = new List<string>();
+
+                // get all module definition permissions for site
+                List<Permission> permissions = _permissions.GetPermissions(siteId, EntityNames.Theme).ToList();
 
                 // get settings for site
                 var settings = _settings.GetSettings(EntityNames.Theme).ToList();
@@ -186,31 +224,39 @@ namespace Oqtane.Repository
                         theme.IsEnabled = theme.IsAutoEnabled;
                     }
 
-                    if (theme.IsEnabled)
+                    if (permissions.Count == 0)
                     {
-                        // build list of assemblies for site
-                        if (!assemblies.Contains(theme.AssemblyName))
+                        // no module definition permissions exist for this site
+                        theme.PermissionList = ClonePermissions(siteId, theme.PermissionList);
+                        _permissions.UpdatePermissions(siteId, EntityNames.Theme, theme.ThemeId, theme.PermissionList);
+                    }
+                    else
+                    {
+                        if (permissions.Any(item => item.EntityId == theme.ThemeId))
                         {
-                            assemblies.Add(theme.AssemblyName);
+                            theme.PermissionList = permissions.Where(item => item.EntityId == theme.ThemeId).ToList();
                         }
-                        if (!string.IsNullOrEmpty(theme.Dependencies))
+                        else
                         {
-                            foreach (var assembly in theme.Dependencies.Replace(".dll", "").Split(',', StringSplitOptions.RemoveEmptyEntries).Reverse())
-                            {
-                                if (!assemblies.Contains(assembly.Trim()))
-                                {
-                                    assemblies.Insert(0, assembly.Trim());
-                                }
-                            }
+                            // permissions for theme do not exist for this site
+                            theme.PermissionList = ClonePermissions(siteId, theme.PermissionList);
+                            _permissions.UpdatePermissions(siteId, EntityNames.Theme, theme.ThemeId, theme.PermissionList);
                         }
                     }
                 }
 
-                // cache site assemblies
-                var serverState = _serverState.GetServerState(siteKey);
-                foreach (var assembly in assemblies)
+                // clean up any orphaned permissions
+                var ids = new HashSet<int>(Themes.Select(item => item.ThemeId));
+                foreach (var permission in permissions.Where(item => !ids.Contains(item.EntityId)))
                 {
-                    if (!serverState.Assemblies.Contains(assembly)) serverState.Assemblies.Add(assembly);
+                    try
+                    {
+                        _permissions.DeletePermission(permission.PermissionId);
+                    }
+                    catch
+                    {
+                        // multi-threading can cause a race condition to occur
+                    }
                 }
             }
 
@@ -281,12 +327,20 @@ namespace Oqtane.Repository
                     {
                         foreach (var resource in theme.Resources)
                         {
-                            if (resource.Url.StartsWith("~"))
+                            if (!string.IsNullOrEmpty(resource.Url) && resource.Url.StartsWith("~"))
                             {
                                 resource.Url = resource.Url.Replace("~", "/Themes/" + Utilities.GetTypeName(theme.ThemeName) + "/").Replace("//", "/");
                             }
                         }
                     }
+
+                    // default permissions
+                    theme.PermissionList = new List<Permission>
+                    {
+                        new Permission(PermissionNames.Utilize, RoleNames.Admin, true),
+                        new Permission(PermissionNames.Utilize, RoleNames.Registered, true)
+                    };
+
                     Debug.WriteLine($"Oqtane Info: Registering Theme {theme.ThemeName}");
                     themes.Add(theme);
                     index = themes.FindIndex(item => item.ThemeName == qualifiedThemeType);
@@ -326,6 +380,28 @@ namespace Oqtane.Repository
                 themes[index] = theme;
             }
             return themes;
+        }
+
+        private List<Permission> ClonePermissions(int siteId, List<Permission> permissionList)
+        {
+            var permissions = new List<Permission>();
+            if (permissionList != null)
+            {
+                foreach (var p in permissionList)
+                {
+                    var permission = new Permission();
+                    permission.SiteId = siteId;
+                    permission.EntityName = p.EntityName;
+                    permission.EntityId = p.EntityId;
+                    permission.PermissionName = p.PermissionName;
+                    permission.RoleId = null;
+                    permission.RoleName = p.RoleName;
+                    permission.UserId = p.UserId;
+                    permission.IsAuthorized = p.IsAuthorized;
+                    permissions.Add(permission);
+                }
+            }
+            return permissions;
         }
     }
 }

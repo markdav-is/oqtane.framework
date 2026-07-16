@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using Oqtane.Enums;
 using Oqtane.Extensions;
@@ -48,9 +50,8 @@ namespace Oqtane.Pages
 
         public IActionResult OnGet(string path)
         {
-            if (string.IsNullOrWhiteSpace(path))
+            if (string.IsNullOrWhiteSpace(path) || _alias == null)
             {
-                _logger.Log(LogLevel.Error, this, LogFunction.Security, "Unauthorized File Access Attempt - Path Not Specified For Site {SiteId}", _alias.SiteId);
                 HttpContext.Response.StatusCode = (int)HttpStatusCode.Forbidden;
                 return BrokenFile();
             }
@@ -87,9 +88,10 @@ namespace Oqtane.Pages
 
             if (file == null)
             {
-                // look for url mapping
+                // referrer will only be set if the link originated externally
+                string referrer = (HttpContext.Request.Headers[HeaderNames.Referer] != StringValues.Empty) ? HttpContext.Request.Headers[HeaderNames.Referer] : "";
 
-                var urlMapping = _urlMappings.GetUrlMapping(_alias.SiteId, "files/" + folderpath + filename);
+                var urlMapping = _urlMappings.GetUrlMapping(_alias.SiteId, "files/" + folderpath + filename, referrer);
                 if (urlMapping != null && !string.IsNullOrEmpty(urlMapping.MappedUrl))
                 {
                     var url = urlMapping.MappedUrl;
@@ -113,7 +115,7 @@ namespace Oqtane.Pages
 
                         url += Request.QueryString.Value.Substring(1);
                     }
-                    
+
                     return RedirectPermanent(url);
                 }
 
@@ -134,9 +136,28 @@ namespace Oqtane.Pages
                 }
             }
 
-            string etag;
+            string etag = Convert.ToString(file.ModifiedOn.Ticks ^ file.Size, 16);
             string downloadName = file.Name;
             string filepath = _files.GetFilePath(file);
+
+            var header = "";
+            if (HttpContext.Request.Headers.TryGetValue(HeaderNames.IfNoneMatch, out var ifNoneMatch))
+            {
+                header = ifNoneMatch.ToString();
+            }
+
+            if (header.Equals(etag))
+            {
+                HttpContext.Response.StatusCode = (int)HttpStatusCode.NotModified;
+                return Content(String.Empty);
+            }
+
+            if (!System.IO.File.Exists(filepath))
+            {
+                _logger.Log(LogLevel.Error, this, LogFunction.Read, "File Does Not Exist {FilePath}", filepath);
+                HttpContext.Response.StatusCode = (int)HttpStatusCode.NotFound;
+                return BrokenFile();
+            }
 
             // evaluate any querystring parameters
             bool isRequestingImageManipulation = false;
@@ -164,34 +185,6 @@ namespace Oqtane.Pages
             if (Request.Query.TryGetValue("format", out var format) && _imageService.GetAvailableFormats().Contains(format.ToString()))
             {
                 isRequestingImageManipulation = true;
-            }
-
-            if (isRequestingImageManipulation)
-            {
-                etag = Utilities.GenerateSimpleHash(Request.QueryString.Value);
-            }
-            else
-            {
-                etag = Convert.ToString(file.ModifiedOn.Ticks ^ file.Size, 16);
-            }
-
-            var header = "";
-            if (HttpContext.Request.Headers.TryGetValue(HeaderNames.IfNoneMatch, out var ifNoneMatch))
-            {
-                header = ifNoneMatch.ToString();
-            }
-
-            if (header.Equals(etag))
-            {
-                HttpContext.Response.StatusCode = (int)HttpStatusCode.NotModified;
-                return Content(String.Empty);
-            }
-
-            if (!System.IO.File.Exists(filepath))
-            {
-                _logger.Log(LogLevel.Error, this, LogFunction.Read, "File Does Not Exist {FilePath}", filepath);
-                HttpContext.Response.StatusCode = (int)HttpStatusCode.NotFound;
-                return BrokenFile();
             }
 
             if (isRequestingImageManipulation)

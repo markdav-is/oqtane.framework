@@ -4,11 +4,18 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Extensions.Options;
-using Oqtane.Models;
 using Oqtane.Shared;
 
 namespace Oqtane.Infrastructure
 {
+    public interface ILocalizationManager
+    {
+        string GetDefaultCulture();
+        string[] GetSupportedCultures();
+        string[] GetInstalledCultures();
+        string[] GetNeutralCultures();
+    }
+
     public class LocalizationManager : ILocalizationManager
     {
         private static readonly string DefaultCulture = Constants.DefaultCulture;
@@ -34,10 +41,24 @@ namespace Oqtane.Infrastructure
 
         public string[] GetSupportedCultures()
         {
-            return CultureInfo.GetCultures(CultureTypes.AllCultures).Select(item => item.Name).OrderBy(c => c).ToArray();
+            return CultureInfo.GetCultures(CultureTypes.AllCultures)
+                .Select(item => item.Name).OrderBy(c => c).ToArray();
         }
 
         public string[] GetInstalledCultures()
+        {
+            return GetSatelliteAssemblyCultures();
+        }
+
+        public string[] GetNeutralCultures()
+        {
+            return CultureInfo.GetCultures(CultureTypes.AllCultures)
+                .Where(item => item.IsNeutralCulture)
+                .Select(item => item.Name).OrderBy(c => c).ToArray();
+        }
+
+        // note: method is public and static as it is called during startup
+        public static string[] GetSatelliteAssemblyCultures()
         {
             var cultures = new List<string>();
             foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), $"*{Constants.SatelliteAssemblyExtension}", SearchOption.AllDirectories))

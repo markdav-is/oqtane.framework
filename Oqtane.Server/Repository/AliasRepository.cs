@@ -2,18 +2,29 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
+using Oqtane.Infrastructure;
 using Oqtane.Models;
 using Oqtane.Shared;
 
 namespace Oqtane.Repository
 {
+    public interface IAliasRepository
+    {
+        IEnumerable<Alias> GetAliases();
+        Alias AddAlias(Alias alias);
+        Alias UpdateAlias(Alias alias);
+        Alias GetAlias(int aliasId);
+        Alias GetAlias(int aliasId, bool tracking);
+        Alias GetAlias(string url);
+        void DeleteAlias(int aliasId);
+    }
+
     public class AliasRepository : IAliasRepository
     {
         private MasterDBContext _db;
-        private readonly IMemoryCache _cache;
+        private readonly ICacheManager _cache;
 
-        public AliasRepository(MasterDBContext context, IMemoryCache cache)
+        public AliasRepository(MasterDBContext context, ICacheManager cache)
         {
             _db = context;
             _cache = cache;
@@ -21,9 +32,8 @@ namespace Oqtane.Repository
 
         public IEnumerable<Alias> GetAliases()
         {
-            return _cache.GetOrCreate("aliases", entry =>
+            return _cache.GetCache("Aliases", entry =>
             {
-                entry.SlidingExpiration = TimeSpan.FromMinutes(30);
                 return _db.Alias.ToList();
             });
         }
@@ -33,7 +43,7 @@ namespace Oqtane.Repository
             alias.Name = alias.Name.Contains("://") ? alias.Name.Substring(alias.Name.IndexOf("://") + 3).ToLower() : alias.Name.ToLower();
             _db.Alias.Add(alias);
             _db.SaveChanges();
-            _cache.Remove("aliases");
+            _cache.RemoveCache("Aliases");
             return alias;
         }
 
@@ -42,7 +52,7 @@ namespace Oqtane.Repository
             alias.Name = alias.Name.Contains("://") ? alias.Name.Substring(alias.Name.IndexOf("://") + 3).ToLower() : alias.Name.ToLower();
             _db.Entry(alias).State = EntityState.Modified;
             _db.SaveChanges();
-            _cache.Remove("aliases");
+            _cache.RemoveCache("Aliases");
             return alias;
         }
 
@@ -110,7 +120,7 @@ namespace Oqtane.Repository
         {
             Alias alias = _db.Alias.Find(aliasId);
             _db.Alias.Remove(alias);
-            _cache.Remove("aliases");
+            _cache.RemoveCache("Aliases");
             _db.SaveChanges();
         }
     }

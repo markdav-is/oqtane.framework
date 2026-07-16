@@ -4,6 +4,7 @@
 @inject NavigationManager NavigationManager
 @inject IThemeService ThemeService
 @inject IPackageService PackageService
+@inject ISiteService SiteService
 @inject IStringLocalizer<Index> Localizer
 @inject IStringLocalizer<SharedResources> SharedLocalizer
 
@@ -14,8 +15,8 @@
 else
 {
     <ActionLink Action="Add" Text="Install Theme" ResourceKey="InstallTheme" />
-    @((MarkupString)"&nbsp;")
-    <ActionLink Action="Create" Text="Create Theme" ResourceKey="CreateTheme" Class="btn btn-secondary" />
+    <ActionLink Action="Create" Text="Create Theme" ResourceKey="CreateTheme" Class="btn btn-secondary ms-1" />
+    <button type="button" class="btn btn-secondary ms-1" @onclick="@Synchronize">@Localizer["Synchronize"]</button>
 
     <Pager Items="@_themes">
         <Header>
@@ -32,9 +33,9 @@ else
             <td><ActionLink Action="Edit" Text="Edit" Parameters="@($"id=" + context.ThemeId.ToString())" ResourceKey="EditTheme" /></td>
             <td>
 				@if (context.AssemblyName != Constants.ClientId)
-                    {
+                {
                     <ActionDialog Header="Delete Theme" Message="@string.Format(Localizer["Confirm.Theme.Delete"], context.Name)" Action="Delete" Security="SecurityAccessLevel.Host" Class="btn btn-danger" OnClick="@(async () => await DeleteTheme(context))" ResourceKey="DeleteTheme" />
-                    }
+                }
             </td>
             <td>@context.Name</td>
             <td>@context.Version</td>
@@ -77,7 +78,7 @@ else
     {
         try
         {
-            _themes = await ThemeService.GetThemesAsync();
+            _themes = await ThemeService.GetThemesAsync(PageState.Site.SiteId);
             _packages = await PackageService.GetPackageUpdatesAsync("theme");
         }
         catch (Exception ex)
@@ -160,7 +161,7 @@ else
     {
         try
         {
-            await ThemeService.DeleteThemeAsync(Theme.ThemeName);
+            await ThemeService.DeleteThemeAsync(Theme.ThemeId, PageState.Site.SiteId);
             AddModuleMessage(Localizer["Success.Theme.Delete"], MessageType.Success);
             NavigationManager.NavigateTo(NavigateUrl(PageState.Page.Path, true));
         }
@@ -168,6 +169,29 @@ else
         {
             await logger.LogError(ex, "Error Deleting Theme {Theme} {Error}", Theme, ex.Message);
             AddModuleMessage(Localizer["Error.Theme.Delete"], MessageType.Error);
+        }
+    }
+
+    private async Task Synchronize()
+    {
+        try
+        {
+            ShowProgressIndicator();
+            foreach (var theme in _themes)
+            {
+                if (!string.IsNullOrEmpty(theme.PackageName) && !_packages.Any(item => item.PackageId == theme.PackageName))
+                {
+                    await PackageService.GetPackageAsync(theme.PackageName, theme.Version, false);
+                }
+            }
+            HideProgressIndicator();
+            AddModuleMessage(Localizer["Success.Theme.Synchronize"], MessageType.Success);
+            NavigationManager.NavigateTo(NavigateUrl(PageState.Page.Path, true));
+        }
+        catch (Exception ex)
+        {
+            await logger.LogError(ex, "Error Synchronizing Themes {Error}", ex.Message);
+            AddModuleMessage(Localizer["Error.Theme.Synchronize"], MessageType.Error);
         }
     }
 }

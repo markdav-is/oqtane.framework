@@ -36,6 +36,7 @@ else
 					<th>@Localizer["Url"]</th>
 					<th>@Localizer["Requests"]</th>
 					<th>@Localizer["Requested"]</th>
+					<th>@Localizer["Referrer"]</th>
 				</Header>
 				<Row>
                     <td><ActionLink Action="Edit" Text="Edit" Parameters="@($"id=" + context.UrlMappingId.ToString())" ResourceKey="Edit" /></td>
@@ -48,8 +49,9 @@ else
 						}
 					</td>
 					<td>@context.Requests</td>
-					<td>@context.RequestedOn</td>
-				</Row>
+					<td>@UtcToLocal(context.RequestedOn)</td>
+                    <td>@context.Referrer</td>
+                </Row>
 			</Pager>
 		</TabPanel>
         <TabPanel Name="Settings" Heading="Settings" ResourceKey="Settings">

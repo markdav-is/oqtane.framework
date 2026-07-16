@@ -31,6 +31,8 @@
 @inject IUrlMappingRepository UrlMappingRepository
 @inject IVisitorRepository VisitorRepository
 @inject IJwtManager JwtManager
+@inject ICookieConsentService CookieConsentService
+@inject ISettingService SettingService
 
 @if (_initialized)
 {
@@ -58,7 +60,7 @@
         }
         @((MarkupString)_headResources)
     </head>
-    <body>
+    <body @attributes="_bodyAttributes">
         @if (string.IsNullOrEmpty(_message))
         {
             @if (_renderMode == RenderModes.Static)
@@ -77,6 +79,7 @@
 
             @((MarkupString)_scripts)
             @((MarkupString)_bodyResources)
+            @((MarkupString)_bodyContent)
             @if (_renderMode == RenderModes.Static)
             {
                 <page-script src="./js/reload.js?v=@_fingerprint"></page-script>
@@ -95,6 +98,7 @@
     private string _renderMode = RenderModes.Interactive;
     private string _runtime = Runtimes.Server;
     private bool _prerender = true;
+    Dictionary<string, object> _bodyAttributes { get; set; } = new();
     private string _fingerprint = "";
     private int _visitorId = -1;
     private string _antiForgeryToken = "";
@@ -104,9 +108,11 @@
     private string _language = "en";
     private string _headResources = "";
     private string _bodyResources = "";
+    private string _bodyContent = "";
     private string _styleSheets = "";
     private string _scripts = "";
     private string _message = "";
+    private bool _allowCookies;
     private PageState _pageState;
 
     //  CascadingParameter is required to access HttpContext
@@ -138,7 +144,14 @@
                     _renderMode = site.RenderMode;
                     _runtime = site.Runtime;
                     _prerender = site.Prerender;
+                    if (_renderMode == RenderModes.Static && !site.EnhancedNavigation)
+                    {
+                        _bodyAttributes.Add("data-enhance-nav", "false");
+                    }
                     _fingerprint = site.Fingerprint;
+
+                    var cookieConsentSettings = SettingService.GetSetting(site.Settings, "CookieConsent", string.Empty);
+                    _allowCookies = string.IsNullOrEmpty(cookieConsentSettings) || await CookieConsentService.CanTrackAsync(cookieConsentSettings == "optout");
 
                     var modules = new List<Module>();
 
@@ -146,15 +159,8 @@
                     var page = site.Pages.FirstOrDefault(item => item.Path.Equals(route.PagePath, StringComparison.OrdinalIgnoreCase));
                     if (page == null && route.PagePath == "") // naked path refers to site home page
                     {
-                        if (site.HomePageId != null)
-                        {
-                            page = site.Pages.FirstOrDefault(item => item.PageId == site.HomePageId);
-                        }
-                        if (page == null)
-                        {
-                            // fallback to use the first page in the collection
-                            page = site.Pages.FirstOrDefault();
-                        }
+                        // fallback to use the first page in the collection
+                        page = site.Pages.FirstOrDefault();
                     }
                     if (page == null)
                     {
@@ -164,13 +170,14 @@
                     if (page == null || page.IsDeleted)
                     {
                         HandlePageNotFound(site, page, route);
+                        return;
                     }
                     else
                     {
                         modules = await SiteService.GetModulesAsync(site.SiteId, page.PageId);
                     }
 
-                    if (site.VisitorTracking)
+                    if (site.VisitorTracking && _allowCookies)
                     {
                         TrackVisitor(site.SiteId);
                     }
@@ -181,45 +188,18 @@
                         await GetJwtToken(alias);
                     }
 
-                    // includes resources
+                    // include resources
                     var resources = await GetPageResources(alias, site, page, modules, int.Parse(route.ModuleId, CultureInfo.InvariantCulture), route.Action);
                     ManageStyleSheets(resources);
                     ManageScripts(resources, alias);
+                    AddBodyContent(site.BodyContent);
+                    AddBodyContent(page.BodyContent);
+                    _language = ManageLocalization(alias, site);
 
-                    // generate scripts
+                    // PWA script
                     if (site.PwaIsEnabled && site.PwaAppIconFileId != null && site.PwaSplashIconFileId != null)
                     {
                         _scripts += CreatePWAScript(alias, site, route);
-                    }
-                    @if (_renderMode == RenderModes.Static)
-                    {
-                        _scripts += CreateScrollPositionScript();
-                    }
-
-                    // set culture if not specified
-                    string cultureCookie = Context.Request.Cookies[Shared.CookieRequestCultureProvider.DefaultCookieName];
-                    if (cultureCookie == null)
-                    {
-                        // get default language for site
-                        if (site.Languages.Any())
-                        {
-                            // use default language if specified otherwise use first language in collection
-                            cultureCookie = (site.Languages.Where(l => l.IsDefault).SingleOrDefault() ?? site.Languages.First()).Code;
-                        }
-                        else
-                        {
-                            // fallback language
-                            cultureCookie = LocalizationManager.GetDefaultCulture();
-                        }
-                        // convert language code to culture cookie format (ie. "c=en|uic=en")
-                        cultureCookie = Shared.CookieRequestCultureProvider.MakeCookieValue(new Models.RequestCulture(cultureCookie));
-                        SetLocalizationCookie(cultureCookie);
-                    }
-
-                    // set language for page
-                    if (!string.IsNullOrEmpty(cultureCookie))
-                    {
-                        _language = Shared.CookieRequestCultureProvider.ParseCookieValue(cultureCookie).Culture.Name;
                     }
 
                     // create initial PageState
@@ -229,7 +209,7 @@
                         Site = site,
                         Page = page,
                         Modules = modules,
-                        User = null,
+                        User = site.User,
                         Uri = new Uri(url, UriKind.Absolute),
                         Route = route,
                         QueryString = Utilities.ParseQueryString(route.Query),
@@ -245,7 +225,8 @@
                         ReturnUrl = "",
                         IsInternalNavigation = false,
                         RenderId = Guid.NewGuid(),
-                        Refresh = true
+                        Refresh = true,
+                        AllowCookies = _allowCookies
                     };
                 }
                 else
@@ -285,20 +266,53 @@
 
     private void HandlePageNotFound(Site site, Page page, Route route)
     {
+        // filter
+        string useragent = (Context.Request.Headers[HeaderNames.UserAgent] != StringValues.Empty) ? Context.Request.Headers[HeaderNames.UserAgent] : "(none)";
+        var settings = Context.GetSiteSettings();
+        var filter = settings.GetValue("VisitorFilter", Constants.DefaultVisitorFilter);
+        foreach (string term in filter.ToLower().Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Select(sValue => sValue.Trim()).ToArray())
+        {
+            if (_remoteIPAddress.ToLower().Contains(term) || useragent.ToLower().Contains(term))
+            {
+                // handle not found request in static mode
+                if (_renderMode == RenderModes.Static)
+                {
+                    NavigationManager.NotFound();
+                }
+                else
+                {
+                    // redirect to 404 page
+                    NavigationManager.NavigateTo(route.SiteUrl + "/404", true);
+                }
+                return;
+            }
+        }
+
+        // referrer will only be set if the link originated externally
+        string referrer = (Context.Request.Headers[HeaderNames.Referer] != StringValues.Empty) ? Context.Request.Headers[HeaderNames.Referer] : "";
+
         // page not found - look for url mapping
-        var urlMapping = UrlMappingRepository.GetUrlMapping(site.SiteId, route.PagePath);
+        var urlMapping = UrlMappingRepository.GetUrlMapping(site.SiteId, route.PagePath, referrer);
         if (urlMapping != null && !string.IsNullOrEmpty(urlMapping.MappedUrl))
         {
             // redirect to mapped url
-            var url = (urlMapping.MappedUrl.StartsWith("http")) ? urlMapping.MappedUrl : route.SiteUrl + "/" + urlMapping.MappedUrl;
+            var url = (urlMapping.MappedUrl.StartsWith("http")) ? urlMapping.MappedUrl : route.SiteUrl + (!urlMapping.MappedUrl.StartsWith("/") ? "/" : "") + urlMapping.MappedUrl + ((!urlMapping.MappedUrl.Contains("?")) ? route.Query : "");
             NavigationManager.NavigateTo(url, true);
         }
         else // no url mapping exists
         {
             if (route.PagePath != "404")
             {
-                // redirect to 404 page
-                NavigationManager.NavigateTo(route.SiteUrl + "/404", true);
+                // handle not found request in static mode
+                if(_renderMode == RenderModes.Static)
+                {
+                    NavigationManager.NotFound();
+                }
+                else
+                {
+                    // redirect to 404 page
+                    NavigationManager.NavigateTo(route.SiteUrl + "/404", true);
+                }
             }
         }
     }
@@ -338,6 +352,7 @@
             DateTime expiry = DateTime.MinValue;
             if (visitorCookieValue != null && visitorCookieValue.Contains("|"))
             {
+                // visitor cookies contain the visitor id and an expiry date separated by a pipe symbol
                 var values = visitorCookieValue.Split('|');
                 int.TryParse(values[0], out _visitorId);
                 DateTime.TryParseExact(values[1], "M/d/yyyy hh:mm:ss tt", CultureInfo.InvariantCulture, DateTimeStyles.None, out expiry);
@@ -502,25 +517,6 @@
         "</script>" + Environment.NewLine;
     }
 
-    private string CreateScrollPositionScript()
-    {
-        return Environment.NewLine +
-        "<script>" + Environment.NewLine +
-        "    // Blazor Static Rendering Scroll Position" + Environment.NewLine +
-        "    window.interceptNavigation = () => {" + Environment.NewLine +
-        "        let currentUrl = window.location.pathname;" + Environment.NewLine +
-        "        Blazor.addEventListener('enhancedload', () => {" + Environment.NewLine +
-        "            let newUrl = window.location.pathname;" + Environment.NewLine +
-        "            if (currentUrl !== newUrl || window.location.hash === '#top') {" + Environment.NewLine +
-        "                window.scrollTo({ top: 0, left: 0, behavior: 'instant' });" + Environment.NewLine +
-        "            }" + Environment.NewLine +
-        "            currentUrl = newUrl;" + Environment.NewLine +
-        "        });" + Environment.NewLine +
-        "    };" + Environment.NewLine +
-        "    document.onload += window.interceptNavigation();" + Environment.NewLine +
-        "</script>" + Environment.NewLine;
-    }
-
     private void AddScript(Resource resource, Alias alias)
     {
         var script = CreateScript(resource, alias);
@@ -548,8 +544,6 @@
         }
         else
         {
-            var url = (resource.Url.Contains("://")) ? resource.Url : alias.BaseUrl + resource.Url;
-
             var dataAttributes = "";
             if (!resource.DataAttributes.ContainsKey("data-reload"))
             {
@@ -571,30 +565,25 @@
                 }
             }
 
-            return "<script src=\"" + url + "\"" +
-                ((!string.IsNullOrEmpty(resource.Type)) ? " type=\"" + resource.Type + "\"" : "") +
-                ((!string.IsNullOrEmpty(resource.Integrity)) ? " integrity=\"" + resource.Integrity + "\"" : "") +
-                ((!string.IsNullOrEmpty(resource.CrossOrigin)) ? " crossorigin=\"" + resource.CrossOrigin + "\"" : "") +
-                ((!string.IsNullOrEmpty(dataAttributes)) ? dataAttributes : "") +
-                "></script>";
+            if (!string.IsNullOrEmpty(resource.Url))
+            {
+                var url = (string.IsNullOrEmpty(resource.Url) || resource.Url.Contains("://")) ? resource.Url : alias.BaseUrl + resource.Url;
+
+                return "<script src=\"" + url + "\"" +
+                    ((!string.IsNullOrEmpty(resource.Type)) ? " type=\"" + resource.Type + "\"" : "") +
+                    ((!string.IsNullOrEmpty(resource.Integrity)) ? " integrity=\"" + resource.Integrity + "\"" : "") +
+                    ((!string.IsNullOrEmpty(resource.CrossOrigin)) ? " crossorigin=\"" + resource.CrossOrigin + "\"" : "") +
+                    ((!string.IsNullOrEmpty(dataAttributes)) ? dataAttributes : "") +
+                    "></script>";
+            }
+            else
+            {
+                return "<script" +
+                    ((!string.IsNullOrEmpty(resource.Type)) ? " type=\"" + resource.Type + "\"" : "") +
+                    ((!string.IsNullOrEmpty(dataAttributes)) ? dataAttributes : "") +
+                    ">" + resource.Content + "</script>";
+            }
         }
-    }
-
-    private void SetLocalizationCookie(string cookieValue)
-    {
-        var cookieOptions = new Microsoft.AspNetCore.Http.CookieOptions
-        {
-            Expires = DateTimeOffset.UtcNow.AddYears(1),
-            SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax, // Set SameSite attribute
-            Secure = true, // Ensure the cookie is only sent over HTTPS
-            HttpOnly = false // cookie is updated using JS Interop in Interactive render mode
-        };
-
-        Context.Response.Cookies.Append(
-            Shared.CookieRequestCultureProvider.DefaultCookieName,
-            cookieValue,
-            cookieOptions
-        );
     }
 
     private async Task<List<Resource>> GetPageResources(Alias alias, Site site, Page page, List<Module> modules, int moduleid, string action)
@@ -638,8 +627,6 @@
             var typename = "";
             if (module.ModuleDefinition != null)
             {
-                resources = AddResources(resources, module.ModuleDefinition.Resources, ResourceLevel.Module, alias, "Modules", Utilities.GetTypeName(module.ModuleDefinition.ModuleDefinitionName), module.ModuleDefinition.Fingerprint, site.RenderMode);
-
                 // handle default action
                 if (action == Constants.DefaultAction && !string.IsNullOrEmpty(module.ModuleDefinition.DefaultAction))
                 {
@@ -684,7 +671,11 @@
                 var moduleobject = Activator.CreateInstance(moduletype) as IModuleControl;
                 if (moduleobject != null)
                 {
-                    resources = AddResources(resources, moduleobject.Resources, ResourceLevel.Module, alias, "Modules", moduletype.Namespace, module.ModuleDefinition?.Fingerprint, site.RenderMode);
+                    if (module.ModuleDefinition != null)
+                    {
+                        resources = AddResources(resources, module.ModuleDefinition.Resources, ResourceLevel.Module, alias, "Modules", moduletype.Namespace, module.ModuleDefinition.Fingerprint, moduleobject.RenderMode);
+                    }
+                    resources = AddResources(resources, moduleobject.Resources, ResourceLevel.Module, alias, "Modules", moduletype.Namespace, module.ModuleDefinition?.Fingerprint, moduleobject.RenderMode);
 
                     // settings components are dynamically loaded within the framework Settings module
                     if (action.ToLower() == "settings" && module.ModuleDefinition != null)
@@ -747,17 +738,17 @@
             {
                 if (rendermode == RenderModes.Static || resource.ResourceType == ResourceType.Stylesheet || resource.Level == ResourceLevel.Site)
                 {
-                    if (resource.Url.StartsWith("~"))
+                    if (!string.IsNullOrEmpty(resource.Url) && resource.Url.StartsWith("~"))
                     {
                         resource.Url = resource.Url.Replace("~", "/" + type + "/" + name + "/").Replace("//", "/");
                     }
-                    if (!resource.Url.Contains("://") && alias.BaseUrl != "" && !resource.Url.StartsWith(alias.BaseUrl))
+                    if (!string.IsNullOrEmpty(resource.Url) && !resource.Url.Contains("://") && alias.BaseUrl != "" && !resource.Url.StartsWith(alias.BaseUrl))
                     {
                         resource.Url = alias.BaseUrl + resource.Url;
                     }
 
                     // ensure resource does not exist already
-                    if (!pageresources.Exists(item => item.Url.ToLower() == resource.Url.ToLower()))
+                    if (!pageresources.Exists(item => Utilities.GetUrlPath(item.Url).ToLower() == Utilities.GetUrlPath(resource.Url).ToLower()))
                     {
                         pageresources.Add(resource.Clone(level, name, fingerprint));
                     }
@@ -798,5 +789,104 @@
                 }
             }
         }
+    }
+
+    private void AddBodyContent(string content)
+    {
+        if (!string.IsNullOrEmpty(content))
+        {
+            var elements = content.Split('<', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var element in elements)
+            {
+                if (_renderMode == RenderModes.Static || (!element.ToLower().StartsWith("script") && !element.ToLower().StartsWith("/script")))
+                {
+                    if (!_bodyContent.Contains("<" + element) || element.StartsWith("/"))
+                    {
+                        _bodyContent += "<" + element;
+                    }
+                }
+            }
+            _bodyContent += "\n";
+        }
+    }
+
+    private string ManageLocalization(Alias alias, Site site)
+    {
+        // get site culture (content localization)
+        var culture = site.CultureCode;
+        if (string.IsNullOrEmpty(culture))
+        {
+            // use fallback language
+            culture = LocalizationManager.GetDefaultCulture();
+        }
+
+        // determine if site is using content localization
+        var contentLocalization = site.Languages.Any(item => !string.IsNullOrEmpty(item.AliasName));
+
+        // get user culture (ui localization)
+        var uiCulture = site.User?.CultureCode;
+        // if user has not specified a UI culture
+        if (string.IsNullOrEmpty(uiCulture))
+        {
+            // if not using content localization
+            if (!contentLocalization)
+            {
+                // use default language if specified otherwise use first language in collection
+                uiCulture = (site.Languages.Where(l => l.IsDefault).SingleOrDefault() ?? site.Languages.First()).Code;
+            }
+            else
+            {
+                // use site culture
+                uiCulture = culture;
+            }
+        }
+        else
+        {
+            // if not using content localization and UI culture is not supported by site
+            if (!contentLocalization && !site.Languages.Any(item => item.Code == uiCulture))
+            {
+                // use site culture
+                uiCulture = culture;                
+            }
+        }
+
+        // get culture cookie
+        string cultureCookie = Context.Request.Cookies[Shared.CookieRequestCultureProvider.DefaultCookieName];
+        if (cultureCookie == null)
+        {
+            // convert to culture cookie format (ie. "c=en|uic=en") and save cookie
+            cultureCookie = Shared.CookieRequestCultureProvider.MakeCookieValue(new Models.RequestCulture(culture, uiCulture));
+            SetLocalizationCookie(cultureCookie);
+        }
+        else
+        {
+            // validate the culture cookie
+            var requestCulture = Shared.CookieRequestCultureProvider.ParseCookieValue(cultureCookie);
+            if (requestCulture?.Culture.Name != culture || requestCulture?.UICulture.Name != uiCulture)
+            {
+                // convert to culture cookie format (ie. "c=en|uic=en") and save cookie
+                cultureCookie = Shared.CookieRequestCultureProvider.MakeCookieValue(new Models.RequestCulture(culture, uiCulture));
+                SetLocalizationCookie(cultureCookie);
+            }
+        }
+
+        return culture; // html element language attribute for page
+    }
+
+    private void SetLocalizationCookie(string cookieValue)
+    {
+        var cookieOptions = new Microsoft.AspNetCore.Http.CookieOptions
+        {
+            Expires = DateTimeOffset.UtcNow.AddYears(1),
+            SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax, // Set SameSite attribute
+            Secure = true, // Ensure the cookie is only sent over HTTPS
+            HttpOnly = false // cookie is updated using JS Interop in Interactive render mode
+        };
+
+        Context.Response.Cookies.Append(
+            Shared.CookieRequestCultureProvider.DefaultCookieName,
+            cookieValue,
+            cookieOptions
+        );
     }
 }

@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using Oqtane.Extensions;
 using Oqtane.Infrastructure;
 using Oqtane.Models;
 using Oqtane.Shared;
@@ -10,6 +9,21 @@ using File = Oqtane.Models.File;
 
 namespace Oqtane.Repository
 {
+    public interface IFileRepository
+    {
+        IEnumerable<File> GetFiles(int folderId);
+        IEnumerable<File> GetFiles(int folderId, bool tracking);
+        File AddFile(File file);
+        File UpdateFile(File file);
+        File GetFile(int fileId);
+        File GetFile(int fileId, bool tracking);
+        File GetFile(int folderId, string fileName);
+        File GetFile(int siteId, string folderPath, string fileName);
+        void DeleteFile(int fileId);
+        string GetFilePath(int fileId);
+        string GetFilePath(File file);
+    }
+
     public class FileRepository : IFileRepository
     {
         private readonly IDbContextFactory<TenantDBContext> _dbContextFactory;
@@ -58,7 +72,6 @@ namespace Oqtane.Repository
         public File AddFile(File file)
         {
             using var db = _dbContextFactory.CreateDbContext();
-            file.IsDeleted = false;
             db.File.Add(file);
             db.SaveChanges();
             file.Folder = _folderRepository.GetFolder(file.FolderId);
@@ -108,7 +121,7 @@ namespace Oqtane.Repository
             var file = db.File.AsNoTracking()
             .Include(item => item.Folder)
             .FirstOrDefault(item => item.FolderId == folderId &&
-                item.Name.ToLower() == fileName);
+                item.Name.ToLower() == fileName.ToLower());
 
             if (file != null)
             {

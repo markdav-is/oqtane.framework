@@ -1,13 +1,32 @@
 using Oqtane.Models;
 using System.Threading.Tasks;
 using System.Net.Http;
-using System.Linq;
 using System.Collections.Generic;
 using Oqtane.Documentation;
 using Oqtane.Shared;
 
 namespace Oqtane.Services
 {
+    /// <summary>
+    /// Service to read the job schedule log
+    /// </summary>
+    public interface IJobLogService
+    {
+        /// <summary>
+        /// Return a list of <see cref="JobLog"/> entries
+        /// </summary>
+        /// <param name="jobId"></param>
+        /// <returns></returns>
+        Task<List<JobLog>> GetJobLogsAsync(int jobId);
+
+        /// <summary>
+        /// Return a <see cref="JobLog"/> entry for the given Id
+        /// </summary>
+        /// <param name="jobLogId"></param>
+        /// <returns></returns>
+        Task<JobLog> GetJobLogAsync(int jobLogId);
+    }
+
     [PrivateApi("Don't show in the documentation, as everything should use the Interface")]
     public class JobLogService : ServiceBase, IJobLogService
     {
@@ -15,10 +34,9 @@ namespace Oqtane.Services
 
         private string Apiurl => CreateApiUrl("JobLog");
 
-        public async Task<List<JobLog>> GetJobLogsAsync()
+        public async Task<List<JobLog>> GetJobLogsAsync(int jobId)
         {
-            List<JobLog> joblogs = await GetJsonAsync<List<JobLog>>(Apiurl);
-            return joblogs.OrderBy(item => item.StartDate).ToList();
+            return await GetJsonAsync<List<JobLog>>($"{Apiurl}?jobid={jobId}");
         }
 
         public async Task<JobLog> GetJobLogAsync(int jobLogId)

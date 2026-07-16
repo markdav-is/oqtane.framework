@@ -14,6 +14,7 @@
 @inject IUrlMappingService UrlMappingService
 @inject ILogService LogService
 @inject ISettingService SettingService
+@inject ICookieConsentService CookieConsentService
 @inject IJSRuntime JSRuntime
 @implements IHandleAfterRender
 @implements IDisposable
@@ -70,7 +71,7 @@
     {
         if (PageState == null || PageState.Refresh)
         {
-            await Refresh();
+            await Refresh(false);
         }
     }
 
@@ -78,7 +79,7 @@
     {
         _absoluteUri = args.Location;
         _isInternalNavigation = true;
-        await Refresh();
+        await Refresh(true);
     }
 
     Task IHandleAfterRender.OnAfterRenderAsync()
@@ -92,7 +93,7 @@
     }
 
     [SuppressMessage("ReSharper", "StringIndexOfIsCultureSpecific.1")]
-    private async Task Refresh()
+    private async Task Refresh(bool locationChanged)
     {
         Site site = null;
         Page page = null;
@@ -102,6 +103,7 @@
         var refresh = false;
         var lastsyncdate = DateTime.MinValue;
         var visitorId = -1;
+        var renderid = Guid.Empty;
         _error = "";
 
         Route route = new Route(_absoluteUri, SiteState.Alias.Path);
@@ -156,11 +158,17 @@
 
         // verify user is authenticated for current site
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        if (authState.User.Identity.IsAuthenticated && authState.User.Claims.Any(item => item.Type == Constants.SiteKeyClaimType && item.Value == SiteState.Alias.SiteKey))
+        if (authState.User.IsAuthenticated() && authState.User.SiteKey() == SiteState.Alias.SiteKey)
         {
-            // get user
-            var userid = int.Parse(authState.User.Claims.First(item => item.Type == ClaimTypes.NameIdentifier).Value);
-            user = await UserService.GetUserAsync(userid, SiteState.Alias.SiteId);
+            if (PageState == null || PageState.User == null || PageState.User.UserId != authState.User.UserId())
+            {
+                // get user
+                user = await UserService.GetUserAsync(authState.User.UserId(), SiteState.Alias.SiteId);
+            }
+            else
+            {
+                user = PageState.User;
+            }
             if (user != null)
             {
                 user.IsAuthenticated = authState.User.Identity.IsAuthenticated;
@@ -225,15 +233,8 @@
 
             if (page == null && route.PagePath == "") // naked path refers to site home page
             {
-                if (site.HomePageId != null)
-                {
-                    page = site.Pages.FirstOrDefault(item => item.PageId == site.HomePageId);
-                }
-                if (page == null)
-                {
-                    // fallback to use the first page in the collection
-                    page = site.Pages.FirstOrDefault();
-                }
+                // fallback to use the first page in the collection
+                page = site.Pages.FirstOrDefault();
             }
             if (page == null)
             {
@@ -287,12 +288,30 @@
                     modules = PageState.Modules;
                 }
 
+                // renderid allows the framework to determine which module components should be rendered on a page
+                if (PageState == null || locationChanged)
+                {
+                    renderid = Guid.NewGuid();
+                }
+                else
+                {
+                    renderid = PageState.RenderId;
+                }
+                
                 // load additional metadata for current page
                 page = ProcessPage(page, site, user, SiteState.Alias, action);
 
                 // load additional metadata for modules
-                (page, modules) = ProcessModules(site, page, modules, moduleid, action, (!string.IsNullOrEmpty(page.DefaultContainerType)) ? page.DefaultContainerType : site.DefaultContainerType, SiteState.Alias);
+                (page, modules) = ProcessModules(site, page, modules, moduleid, action, (!string.IsNullOrEmpty(page.DefaultContainerType)) ? page.DefaultContainerType : site.DefaultContainerType, SiteState.Alias, renderid);
 
+                //cookie consent
+                var _allowCookies = PageState?.AllowCookies;
+                if(!_allowCookies.HasValue)
+                {
+                    var cookieConsentSettings = SettingService.GetSetting(site.Settings, "CookieConsent", string.Empty);
+                    _allowCookies = string.IsNullOrEmpty(cookieConsentSettings) || await CookieConsentService.CanTrackAsync(cookieConsentSettings == "optout");
+                }
+                
                 // populate page state (which acts as a client-side cache for subsequent requests)
                 _pagestate = new PageState
                 {
@@ -315,8 +334,9 @@
 					RemoteIPAddress = SiteState.RemoteIPAddress,
 					ReturnUrl = returnurl,
                     IsInternalNavigation = _isInternalNavigation,
-                    RenderId = Guid.NewGuid(),
-                    Refresh = false
+                    RenderId = renderid,
+                    Refresh = false,
+                    AllowCookies = _allowCookies.GetValueOrDefault(true)
                 };
                 OnStateChange?.Invoke(_pagestate);
 
@@ -333,7 +353,7 @@
                     var urlMapping = await UrlMappingService.GetUrlMappingAsync(site.SiteId, route.PagePath);
                     if (urlMapping != null && !string.IsNullOrEmpty(urlMapping.MappedUrl))
                     {
-                        var url = (urlMapping.MappedUrl.StartsWith("http")) ? urlMapping.MappedUrl : route.SiteUrl + "/" + urlMapping.MappedUrl + route.Query;
+                        var url = (urlMapping.MappedUrl.StartsWith("http")) ? urlMapping.MappedUrl : route.SiteUrl + (!urlMapping.MappedUrl.StartsWith("/") ? "/" : "") + urlMapping.MappedUrl + ((!urlMapping.MappedUrl.Contains("?")) ? route.Query : "");
                         NavigationManager.NavigateTo(url, false);
                         return;
                     }
@@ -437,7 +457,7 @@
         return page;
     }
 
-    private (Page Page, List<Module> Modules) ProcessModules(Site site, Page page, List<Module> modules, int moduleid, string action, string defaultcontainertype, Alias alias)
+    private (Page Page, List<Module> Modules) ProcessModules(Site site, Page page, List<Module> modules, int moduleid, string action, string defaultcontainertype, Alias alias, Guid renderid)
     {
         var paneindex = new Dictionary<string, int>();
 
@@ -582,6 +602,8 @@
             {
                 module.ContainerType = defaultcontainertype;
             }
+
+            module.RenderId = renderid;
         }
 
         foreach (Module module in modules.Where(item => item.PageId == page.PageId))
@@ -603,17 +625,17 @@
             {
                 if (resource.ResourceType == ResourceType.Stylesheet || resource.Level != ResourceLevel.Site)
                 {
-                    if (resource.Url.StartsWith("~"))
+                    if (!string.IsNullOrEmpty(resource.Url) && resource.Url.StartsWith("~"))
                     {
                         resource.Url = resource.Url.Replace("~", "/" + type + "/" + name + "/").Replace("//", "/");
                     }
-                    if (!resource.Url.Contains("://") && alias.BaseUrl != "" && !resource.Url.StartsWith(alias.BaseUrl))
+                    if (!string.IsNullOrEmpty(resource.Url) && !resource.Url.Contains("://") && alias.BaseUrl != "" && !resource.Url.StartsWith(alias.BaseUrl))
                     {
                         resource.Url = alias.BaseUrl + resource.Url;
                     }
 
                     // ensure resource does not exist already
-                    if (!pageresources.Exists(item => item.Url.ToLower() == resource.Url.ToLower()))
+                    if (!pageresources.Exists(item => Utilities.GetUrlPath(item.Url).ToLower() == Utilities.GetUrlPath(resource.Url).ToLower()))
                     {
                         pageresources.Add(resource.Clone(level, name, fingerprint));
                     }

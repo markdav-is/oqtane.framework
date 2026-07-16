@@ -1,26 +1,28 @@
-using Microsoft.AspNetCore.Components;
-using Oqtane.Shared;
-using Oqtane.Models;
-using System.Threading.Tasks;
-using Oqtane.Services;
 using System;
-using Oqtane.Enums;
-using Oqtane.UI;
 using System.Collections.Generic;
-using Microsoft.JSInterop;
-using System.Linq;
 using System.Dynamic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
+using Oqtane.Enums;
+using Oqtane.Models;
+using Oqtane.Security;
+using Oqtane.Services;
+using Oqtane.Shared;
+using Oqtane.UI;
 
 namespace Oqtane.Modules
 {
     public abstract class ModuleBase : ComponentBase, IModuleControl
     {
         private Logger _logger;
-        private string _urlparametersstate;
+        private string _urlparametersstate = string.Empty;
         private Dictionary<string, string> _urlparameters;
         private bool _scriptsloaded = false;
 
-        protected Logger logger => _logger ?? (_logger = new Logger(this));
+        public Logger logger => _logger ?? (_logger = new Logger(this));
 
         [Inject]
         protected ILogService LoggingService { get; set; }
@@ -35,7 +37,7 @@ namespace Oqtane.Modules
         protected PageState PageState { get; set; }
 
         [CascadingParameter]
-        protected Module ModuleState { get; set; }
+        protected Models.Module ModuleState { get; set; }
 
         [Parameter]
         public RenderModeBoundary RenderModeBoundary { get; set; }
@@ -61,7 +63,7 @@ namespace Oqtane.Modules
         public Dictionary<string, string> UrlParameters {
             get
             {
-                if (_urlparametersstate == null || _urlparametersstate != PageState.UrlParameters)
+                if (string.IsNullOrEmpty(_urlparametersstate) || _urlparametersstate != PageState.UrlParameters)
                 {
                     _urlparametersstate = PageState.UrlParameters;
                     _urlparameters = GetUrlParameters(UrlParametersTemplate);
@@ -78,18 +80,21 @@ namespace Oqtane.Modules
             {
                 List<Resource> resources = null;
                 var type = GetType();
-                if (type.BaseType == typeof(ModuleBase))
+                if (type.IsSubclassOf(typeof(ModuleBase)))
                 {
-                    if (PageState.Page.Resources != null)
+                    if (type.IsSubclassOf(typeof(ModuleControlBase)))
                     {
-                        resources = PageState.Page.Resources.Where(item => item.ResourceType == ResourceType.Script && item.Level == ResourceLevel.Module && item.Namespace == type.Namespace).ToList();
+                        if (Resources != null)
+                        {
+                            resources = Resources.Where(item => item.ResourceType == ResourceType.Script).ToList();
+                        }
                     }
-                }
-                else // modulecontrolbase
-                {
-                    if (Resources != null)
+                    else // ModuleBase
                     {
-                        resources = Resources.Where(item => item.ResourceType == ResourceType.Script).ToList();
+                        if (PageState.Page.Resources != null)
+                        {
+                            resources = PageState.Page.Resources.Where(item => item.ResourceType == ResourceType.Script && item.Level == ResourceLevel.Module && item.Namespace == type.Namespace).ToList();
+                        }
                     }
                 }
                 if (resources != null && resources.Any())
@@ -135,20 +140,42 @@ namespace Oqtane.Modules
             }
         }
 
-        // path method
+        // path methods
 
         public string ModulePath()
         {
             return PageState?.Alias.BaseUrl + "/Modules/" + GetType().Namespace + "/";
         }
 
+        public string StaticAssetPath
+        {
+            get
+            {
+                // requires module to have implemented IModule
+                return PageState?.Alias.BaseUrl + "_content/" + ModuleState.ModuleDefinition?.PackageName + "/";
+            }
+        }
+
         // fingerprint hash code for static assets
+
         public string Fingerprint
         {
             get
             {
                 return ModuleState.ModuleDefinition.Fingerprint;
             }
+        }
+
+        // authorization methods
+
+        public bool IsAuthorizedRole(string roleName)
+        {
+            return UserSecurity.IsAuthorized(PageState.User, roleName);
+        }
+
+        public bool IsAuthorizedPermission(string permissionName)
+        {
+            return UserSecurity.IsAuthorized(PageState.User, permissionName, ModuleState.PermissionList);
         }
 
         // url methods
@@ -345,6 +372,11 @@ namespace Oqtane.Modules
         }
 
         // UI methods
+        private static readonly string RenderModeBoundaryErrorMessage =
+            "RenderModeBoundary is not available. This method requires a RenderModeBoundary parameter. " +
+            "If you are using child components, ensure you pass the RenderModeBoundary property to the child component: " +
+            "<ChildComponent RenderModeBoundary=\"RenderModeBoundary\" />";
+
         public void AddModuleMessage(string message, MessageType type)
         {
             AddModuleMessage(message, type, "top");
@@ -352,21 +384,47 @@ namespace Oqtane.Modules
 
         public void AddModuleMessage(string message, MessageType type, string position)
         {
-            RenderModeBoundary.AddModuleMessage(message, type, position);
+            AddModuleMessage(message, type, position, MessageStyle.Alert);
+        }
+
+        public void AddModuleMessage(string message, MessageType type, MessageStyle style)
+        {
+            AddModuleMessage(message, type, "top", style);
+        }
+
+        public void AddModuleMessage(string message, MessageType type, string position, MessageStyle style)
+        {
+            if (RenderModeBoundary == null)
+            {
+                throw new InvalidOperationException(RenderModeBoundaryErrorMessage);
+            }
+            RenderModeBoundary.AddModuleMessage(message, type, position, style);
         }
 
         public void ClearModuleMessage()
         {
+            if (RenderModeBoundary == null)
+            {
+                throw new InvalidOperationException(RenderModeBoundaryErrorMessage);
+            }
             RenderModeBoundary.AddModuleMessage("", MessageType.Undefined);
         }
 
         public void ShowProgressIndicator()
         {
+            if (RenderModeBoundary == null)
+            {
+                throw new InvalidOperationException(RenderModeBoundaryErrorMessage);
+            }
             RenderModeBoundary.ShowProgressIndicator();
         }
 
         public void HideProgressIndicator()
         {
+            if (RenderModeBoundary == null)
+            {
+                throw new InvalidOperationException(RenderModeBoundaryErrorMessage);
+            }
             RenderModeBoundary.HideProgressIndicator();
         }
 
@@ -413,6 +471,139 @@ namespace Oqtane.Modules
             await interop.ScrollTo(0, 0, "smooth");
         }
 
+
+        // token replace methods
+
+        public string ReplaceTokens(string content)
+        {
+            return ReplaceTokens(content, null);
+        }
+
+        public string ReplaceTokens(string content, object obj)
+        {
+            // check for null or empty content
+            if (string.IsNullOrEmpty(content))
+            {
+                return content;
+            }
+            // Using StringBuilder avoids the performance penalty of repeated string allocations
+            // that occur with string.Replace or string concatenation inside loops.
+            var sb = new StringBuilder();
+            var cache = new Dictionary<string, string>(); // Cache to store resolved tokens
+            int index = 0;
+
+            // Loop through content to find and replace all tokens
+            while (index < content.Length)
+            {
+                int start = content.IndexOf('[', index); // Find start of token
+                if (start == -1)
+                {
+                    sb.Append(content, index, content.Length - index); // Append remaining content
+                    break;
+                }
+
+                int end = content.IndexOf(']', start); // Find end of token
+                if (end == -1)
+                {
+                    sb.Append(content, index, content.Length - index); // Append unmatched content
+                    break;
+                }
+
+                sb.Append(content, index, start - index); // Append content before token
+
+                string token = content.Substring(start + 1, end - start - 1); // Extract token without brackets
+                string[] parts = token.Split('|', 2); // Separate default fallback if present
+                string key = parts[0];
+                string fallback = parts.Length == 2 ? parts[1] : null;
+
+                if (!cache.TryGetValue(token, out string replacement)) // Check cache first
+                {
+                    replacement = "[" + token + "]"; // Default replacement is original token
+                    string[] segments = key.Split(':');
+
+                    if (segments.Length >= 2)
+                    {
+                        object current = GetTarget(segments[0], obj); // Start from root object
+                        for (int i = 1; i < segments.Length && current != null; i++)
+                        {
+                            var type = current.GetType();
+                            var prop = type.GetProperty(segments[i]);
+                            current = prop?.GetValue(current);
+                        }
+
+                        if (current != null)
+                        {
+                            replacement = current.ToString();
+                        }
+                        else if (fallback != null)
+                        {
+                            replacement = fallback; // Use fallback if available
+                        }
+                    }
+                    cache[token] = replacement; // Store in cache
+                }
+
+                sb.Append(replacement); // Append replacement value
+                index = end + 1; // Move index past token
+            }
+
+            return sb.ToString();
+        }
+
+        // Resolve the object instance for a given object name
+        // Easy to extend with additional object types
+        private object GetTarget(string name, object obj)
+        {
+            return name switch
+            {
+                "ModuleState" => ModuleState,
+                "PageState" => PageState,
+                _ => (obj != null && obj.GetType().Name == name) ? obj : null // Fallback to obj
+            };
+        }
+
+        // date conversion methods
+
+        public DateTime? UtcToLocal(DateTime? datetime)
+        {
+            // Early return if input is null
+            if (datetime == null || datetime.Value == DateTime.MinValue || datetime.Value == DateTime.MaxValue)
+                return datetime;
+
+            string timezoneId = null;
+
+            if (PageState.User != null && !string.IsNullOrEmpty(PageState.User.TimeZoneId))
+            {
+                timezoneId = PageState.User.TimeZoneId;
+            }
+            else if (!string.IsNullOrEmpty(PageState.Site.TimeZoneId))
+            {
+                timezoneId = PageState.Site.TimeZoneId;
+            }
+
+            return Utilities.UtcAsLocalDateTime(datetime, timezoneId);
+        }
+
+        public DateTime? LocalToUtc(DateTime? datetime)
+        {
+            // Early return if input is null
+            if (datetime == null || datetime.Value == DateTime.MinValue || datetime.Value == DateTime.MaxValue)
+                return datetime;
+
+            string timezoneId = null;
+
+            if (PageState.User != null && !string.IsNullOrEmpty(PageState.User.TimeZoneId))
+            {
+                timezoneId = PageState.User.TimeZoneId;
+            }
+            else if (!string.IsNullOrEmpty(PageState.Site.TimeZoneId))
+            {
+                timezoneId = PageState.Site.TimeZoneId;
+            }
+
+            return Utilities.LocalDateAndTimeAsUtc(datetime, timezoneId);
+        }
+
         // logging methods
         public async Task Log(Alias alias, LogLevel level, string function, Exception exception, string message, params object[] args)
         {
@@ -448,12 +639,10 @@ namespace Oqtane.Modules
 
         public async Task Log(Alias alias, LogLevel level, LogFunction function, Exception exception, string message, params object[] args)
         {
-            int pageId = ModuleState.PageId;
-            int moduleId = ModuleState.ModuleId;
             string category = GetType().AssemblyQualifiedName;
             string feature = Utilities.GetTypeNameLastSegment(category, 1);
 
-            await LoggingService.Log(alias, pageId, moduleId, PageState.User?.UserId, category, feature, function, level, exception, message, args);
+            await LoggingService.Log(alias, ModuleState.PageId, ModuleState.ModuleId, PageState.User?.UserId, category, feature, PageState.RemoteIPAddress, function, level, exception, message, args);
         }
 
         public class Logger

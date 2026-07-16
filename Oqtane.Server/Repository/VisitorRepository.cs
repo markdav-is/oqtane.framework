@@ -6,6 +6,17 @@ using Oqtane.Models;
 
 namespace Oqtane.Repository
 {
+    public interface IVisitorRepository
+    {
+        IEnumerable<Visitor> GetVisitors(int siteId, DateTime fromDate);
+        Visitor AddVisitor(Visitor visitor);
+        Visitor UpdateVisitor(Visitor visitor);
+        Visitor GetVisitor(int visitorId);
+        Visitor GetVisitor(int siteId, string IPAddress);
+        void DeleteVisitor(int visitorId);
+        int DeleteVisitors(int siteId, int age);
+    }
+
     public class VisitorRepository : IVisitorRepository
     {
         private readonly IDbContextFactory<TenantDBContext> _dbContextFactory;
@@ -65,14 +76,14 @@ namespace Oqtane.Repository
             // delete visitors in batches of 100 records
             var count = 0;
             var purgedate = DateTime.UtcNow.AddDays(-age);
-            var visitors = db.Visitor.Where(item => item.SiteId == siteId && item.Visits < 2 && item.VisitedOn < purgedate)
+            var visitors = db.Visitor.Where(item => item.SiteId == siteId && item.VisitedOn < purgedate)
                 .OrderBy(item => item.VisitedOn).Take(100).ToList();
             while (visitors.Count > 0)
             {
                 count += visitors.Count;
                 db.Visitor.RemoveRange(visitors);
                 db.SaveChanges();
-                visitors = db.Visitor.Where(item => item.SiteId == siteId && item.Visits < 2 && item.VisitedOn < purgedate)
+                visitors = db.Visitor.Where(item => item.SiteId == siteId && item.VisitedOn < purgedate)
                     .OrderBy(item => item.VisitedOn).Take(100).ToList();
             }
             return count;

@@ -20,14 +20,16 @@ namespace Oqtane.Controllers
     {
         private readonly IFolderRepository _folders;
         private readonly IUserPermissions _userPermissions;
+        private readonly IFileRepository _files;
         private readonly ISyncManager _syncManager;
         private readonly ILogManager _logger;
         private readonly Alias _alias;
 
-        public FolderController(IFolderRepository folders, IUserPermissions userPermissions, ISyncManager syncManager, ILogManager logger, ITenantManager tenantManager)
+        public FolderController(IFolderRepository folders, IUserPermissions userPermissions, IFileRepository files, ISyncManager syncManager, ILogManager logger, ITenantManager tenantManager)
         {
             _folders = folders;
             _userPermissions = userPermissions;
+            _files = files;
             _syncManager = syncManager;
             _logger = logger;
             _alias = tenantManager.GetAlias();
@@ -41,7 +43,8 @@ namespace Oqtane.Controllers
             int SiteId;
             if (int.TryParse(siteid, out SiteId) && SiteId == _alias.SiteId)
             {
-                foreach (Folder folder in _folders.GetFolders(SiteId))
+                var hierarchy = _folders.GetFolders(SiteId).ToList();
+                foreach (Folder folder in hierarchy)
                 {
                     // note that Browse permission is used for this method
                     if (_userPermissions.IsAuthorized(User, PermissionNames.Browse, folder.PermissionList))
@@ -49,7 +52,6 @@ namespace Oqtane.Controllers
                         folders.Add(folder);
                     }
                 }
-                folders = GetFoldersHierarchy(folders);
             }
             else
             {
@@ -244,34 +246,6 @@ namespace Oqtane.Controllers
             return folder;
         }
 
-        // PUT api/<controller>/?siteid=x&folderid=y&parentid=z
-        [HttpPut]
-        [Authorize(Roles = RoleNames.Registered)]
-        public void Put(int siteid, int folderid, int? parentid)
-        {
-            if (siteid == _alias.SiteId && _folders.GetFolder(folderid, false) != null && _userPermissions.IsAuthorized(User, siteid, EntityNames.Folder, folderid, PermissionNames.Edit))
-            {
-                int order = 1;
-                List<Folder> folders = _folders.GetFolders(siteid).ToList();
-                foreach (Folder folder in folders.Where(item => item.ParentId == parentid).OrderBy(item => item.Order))
-                {
-                    if (folder.Order != order)
-                    {
-                        folder.Order = order;
-                        _folders.UpdateFolder(folder);
-                        _syncManager.AddSyncEvent(_alias, EntityNames.Folder, folder.FolderId, SyncEventActions.Update);
-                    }
-                    order += 2;
-                }
-                _logger.Log(LogLevel.Information, this, LogFunction.Update, "Folder Order Updated {SiteId} {FolderId} {ParentId}", siteid, folderid, parentid);
-            }
-            else
-            {
-                _logger.Log(LogLevel.Error, this, LogFunction.Update, "Unauthorized Folder Put Attempt {SiteId} {FolderId} {ParentId}", siteid, folderid, parentid);
-                HttpContext.Response.StatusCode = (int)HttpStatusCode.Forbidden;
-            }
-        }
-
         // DELETE api/<controller>/5
         [HttpDelete("{id}")]
         [Authorize(Roles = RoleNames.Registered)]
@@ -280,10 +254,23 @@ namespace Oqtane.Controllers
             var folder = _folders.GetFolder(id, false);
             if (folder != null && folder.SiteId == _alias.SiteId && _userPermissions.IsAuthorized(User, folder.SiteId, EntityNames.Folder, id, PermissionNames.Edit))
             {
-                if (Directory.Exists(_folders.GetFolderPath(folder)))
+                var folderPath = _folders.GetFolderPath(folder);
+                if (Directory.Exists(folderPath))
                 {
-                    Directory.Delete(_folders.GetFolderPath(folder));
+                    // remove all files from disk (including thumbnails, etc...)
+                    foreach (var filePath in Directory.GetFiles(folderPath))
+                    {
+                        System.IO.File.Delete(filePath);
+                    }
+                    Directory.Delete(folderPath);
                 }
+
+                // remove files from database
+                foreach (var file in _files.GetFiles(id))
+                {
+                    _files.DeleteFile(file.FileId);
+                }
+
                 _folders.DeleteFolder(id);
                 _syncManager.AddSyncEvent(_alias, EntityNames.Folder, folder.FolderId, SyncEventActions.Delete);
                 _logger.Log(LogLevel.Information, this, LogFunction.Delete, "Folder Deleted {FolderId}", id);
@@ -293,49 +280,6 @@ namespace Oqtane.Controllers
                 _logger.Log(LogLevel.Error, this, LogFunction.Security, "Unauthorized Folder Delete Attempt {FolderId}", id);
                 HttpContext.Response.StatusCode = (int)HttpStatusCode.Forbidden;
             }
-        }
-
-        private static List<Folder> GetFoldersHierarchy(List<Folder> folders)
-        {
-            List<Folder> hierarchy = new List<Folder>();
-            Action<List<Folder>, Folder> getPath = null;
-            var folders1 = folders;
-            getPath = (folderList, folder) =>
-            {
-                IEnumerable<Folder> children;
-                int level;
-                if (folder == null)
-                {
-                    level = -1;
-                    children = folders1.Where(item => item.ParentId == null);
-                }
-                else
-                {
-                    level = folder.Level;
-                    children = folders1.Where(item => item.ParentId == folder.FolderId);
-                }
-
-                foreach (Folder child in children)
-                {
-                    child.Level = level + 1;
-                    child.HasChildren = folders1.Any(item => item.ParentId == child.FolderId);
-                    hierarchy.Add(child);
-                    if (getPath != null) getPath(folderList, child);
-                }
-            };
-            folders = folders.OrderBy(item => item.Order).ToList();
-            getPath(folders, null);
-
-            // add any non-hierarchical items to the end of the list
-            foreach (Folder folder in folders)
-            {
-                if (hierarchy.Find(item => item.FolderId == folder.FolderId) == null)
-                {
-                    hierarchy.Add(folder);
-                }
-            }
-
-            return hierarchy;
         }
     }
 }

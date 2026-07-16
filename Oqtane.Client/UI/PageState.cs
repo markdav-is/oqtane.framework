@@ -27,6 +27,7 @@ namespace Oqtane.UI
         public bool IsInternalNavigation { get; set; }
         public Guid RenderId { get; set; }
         public bool Refresh {  get; set; }
+        public bool AllowCookies { get; set; }
 
         public List<Page> Pages
         {
@@ -35,6 +36,35 @@ namespace Oqtane.UI
         public List<Language> Languages
         {
             get { return Site?.Languages; }
+        }
+
+        public PageState Clone()
+        {
+            return new PageState
+            {
+                Alias = Alias,
+                Site = Site,
+                Page = Page,
+                Modules = Modules,
+                User = User,
+                Uri = Uri,
+                Route = Route,
+                QueryString = QueryString,
+                UrlParameters = UrlParameters,
+                ModuleId = ModuleId,
+                Action = Action,
+                EditMode = EditMode,
+                LastSyncDate = LastSyncDate,
+                RenderMode = RenderMode,
+                Runtime = Runtime,
+                VisitorId = VisitorId,
+                RemoteIPAddress = RemoteIPAddress,
+                ReturnUrl = ReturnUrl,
+                IsInternalNavigation = IsInternalNavigation,
+                RenderId = RenderId,
+                Refresh = Refresh,
+                AllowCookies = AllowCookies
+            };
         }
     }
 }

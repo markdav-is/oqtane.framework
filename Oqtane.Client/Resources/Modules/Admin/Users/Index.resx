@@ -132,6 +132,18 @@
   <data name="AllowRegistration.Text" xml:space="preserve">
     <value>Allow Registration? </value>
   </data>
+  <data name="RegisterUrl.HelpText" xml:space="preserve">
+    <value>Optionally provide a custom registration url</value>
+  </data>
+  <data name="RegisterUrl.Text" xml:space="preserve">
+    <value>Register Url: </value>
+  </data>
+  <data name="ProfileUrl.HelpText" xml:space="preserve">
+    <value>Optionally provide a custom user profile url</value>
+  </data>
+  <data name="ProfileUrl.Text" xml:space="preserve">
+    <value>Profile Url: </value>
+  </data>
   <data name="Error.SaveSiteSettings" xml:space="preserve">
     <value>Error Saving Settings</value>
   </data>
@@ -205,10 +217,10 @@
     <value>Unique Characters:</value>
   </data>
   <data name="AllowSiteLogin.HelpText" xml:space="preserve">
-    <value>Do you want to allow users to sign in using a username and password that is managed locally on this site? Note that you should only disable this option if you have already sucessfully configured an external login provider, or else you may lock yourself out of the site.</value>
+    <value>Do you want to allow users to sign in using a username and password that is managed locally on this site? Note that you should only disable this option if you have already successfully configured an alternate login method, or else you may lock yourself out of the site.</value>
   </data>
   <data name="AllowSiteLogin.Text" xml:space="preserve">
-    <value>Allow Login?</value>
+    <value>Allow Local Login?</value>
   </data>
   <data name="Authority.HelpText" xml:space="preserve">
     <value>The authority url or issuer url associated with the identity provider</value>
@@ -358,7 +370,13 @@
     <value>Do you want users to use two factor authentication? Note that you should use the Disabled option until you have successfully verified that the Notification Job in Scheduled Jobs is enabled and your SMTP options in Site Settings are configured or else you will lock yourself out.</value>
   </data>
   <data name="TwoFactor.Text" xml:space="preserve">
-    <value>Two Factor?</value>
+    <value>Use 2FA?</value>
+  </data>
+  <data name="RequireConfirmedEmail.HelpText" xml:space="preserve">
+    <value>Do you want to require registered users to verify their email address before they are allowed to log in?</value>
+  </data>
+  <data name="RequireConfirmedEmail.Text" xml:space="preserve">
+    <value>Require Verified Email?</value>
   </data>
   <data name="Disabled" xml:space="preserve">
     <value>Disabled</value>
@@ -490,10 +508,16 @@
     <value>Info</value>
   </data>
   <data name="OAuth2" xml:space="preserve">
-    <value>OAuth 2.0</value>
+    <value>OAuth 2.0 (OAuth2)</value>
   </data>
   <data name="OIDC" xml:space="preserve">
     <value>OpenID Connect (OIDC)</value>
+  </data>
+  <data name="RequireNonce.Text" xml:space="preserve">
+    <value>Require Nonce?</value>
+  </data>
+  <data name="RequireNonce.HelpText" xml:space="preserve">
+    <value>Specify if Nonce validation is required for the ID token (the default is true)</value>
   </data>
   <data name="SaveTokens.Text" xml:space="preserve">
     <value>Save Tokens?</value>
@@ -506,5 +530,53 @@
   </data>
   <data name="Error.DeleteUser" xml:space="preserve">
     <value>Error Deleting User</value>
+  </data>
+  <data name="LogoutEverywhere.Text" xml:space="preserve">
+    <value>Logout Everywhere?</value>
+  </data>
+  <data name="LogoutEverywhere.HelpText" xml:space="preserve">
+    <value>Do you want users to be logged out of every active session on any device, or only their current session?</value>
+  </data>
+  <data name="AllowHostRole.Text" xml:space="preserve">
+    <value>Allow Host Role?</value>
+  </data>
+  <data name="AllowHostRole.HelpText" xml:space="preserve">
+    <value>Indicate if host roles are supported from the identity provider. Please use caution with this option as it allows the host user to administrate every site within your installation.</value>
+  </data>
+  <data name="Active Users" xml:space="preserve">
+    <value>Active Users</value>
+  </data>
+  <data name="Deleted Users" xml:space="preserve">
+    <value>Deleted Users</value>
+  </data>
+  <data name="CookieDomain.Text" xml:space="preserve">
+    <value>Cookie Domain:</value>
+  </data>
+  <data name="CookieDomain.HelpText" xml:space="preserve">
+    <value>If you would like to share cookies across subdomains you will need to specify a root domain with a leading dot (ie. '.example.com')</value>
+  </data>
+  <data name="SingleLogout.Text" xml:space="preserve">
+    <value>Allow Single Logout?</value>
+  </data>
+  <data name="SingleLogout.HelpText" xml:space="preserve">
+    <value>Specify if users should be logged out of both the application and provider (the default is false indicating they will only be logged out of the application)</value>
+  </data>
+  <data name="Passkeys.Text" xml:space="preserve">
+    <value>Allow Passkeys?</value>
+  </data>
+  <data name="Passkeys.HelpText" xml:space="preserve">
+    <value>Do you want to allow users to login using passkeys (ie. passwordless authentication using WebAuthn/FIDO2)?</value>
+  </data>
+  <data name="LoginLink.Text" xml:space="preserve">
+    <value>Allow Login Link?</value>
+  </data>
+  <data name="LoginLink.HelpText" xml:space="preserve">
+    <value>Do you want to allow users to login using a time sensitive link sent by email?</value>
+  </data>
+  <data name="ProfileDisplayName.Text" xml:space="preserve">
+    <value>Profile Display Name:</value>
+  </data>
+  <data name="ProfileDisplayName.HelpText" xml:space="preserve">
+    <value>Optionally specify the identifier which will be used for the user's profile (the default is username)</value>
   </data>
 </root>

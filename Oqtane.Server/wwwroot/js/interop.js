@@ -14,6 +14,9 @@ Oqtane.Interop = {
         }
         document.cookie = cookieString;
     },
+    setCookieString: function (cookieString) {
+        document.cookie = cookieString;
+    },
     getCookie: function (name) {
         name = name + "=";
         var decodedCookie = decodeURIComponent(document.cookie);
@@ -121,7 +124,7 @@ Oqtane.Interop = {
         }
     },
     includeScript: function (id, src, integrity, crossorigin, type, content, location, dataAttributes) {
-        var script;
+        var script = null;
         if (src !== "") {
             script = document.querySelector("script[src=\"" + CSS.escape(src) + "\"]");
         }
@@ -137,7 +140,7 @@ Oqtane.Interop = {
                 }
             }
         }
-        if (script !== null) {
+        if (script instanceof HTMLScriptElement) {
             script.remove();
             script = null;
         }
@@ -308,7 +311,7 @@ Oqtane.Interop = {
         }
         return files;
     },
-    uploadFiles: async function (posturl, folder, id, antiforgerytoken, jwt, chunksize) {
+    uploadFiles: async function (posturl, folder, id, antiforgerytoken, jwt, chunksize, anonymizeuploadfilenames) {
         var success = true;
         var fileinput = document.getElementById('FileInput_' + id);
         var progressinfo = document.getElementById('ProgressInfo_' + id);
@@ -341,16 +344,22 @@ Oqtane.Interop = {
             const totalParts = Math.ceil(file.size / chunkSize);
             let partCount = 0;
 
+            let filename = file.name;
+            if (anonymizeuploadfilenames) {
+                filename = crypto.randomUUID() + '.' + filename.split('.').pop();
+            }
+
             const uploadPart = () => {
                 const start = partCount * chunkSize;
                 const end = Math.min(start + chunkSize, file.size);
                 const chunk = file.slice(start, end);
 
                 return new Promise((resolve, reject) => {
+
                     let formdata = new FormData();
                     formdata.append('__RequestVerificationToken', antiforgerytoken);
                     formdata.append('folder', folder);
-                    formdata.append('formfile', chunk, file.name);
+                    formdata.append('formfile', chunk, filename);
 
                     var credentials = 'same-origin';
                     var headers = new Headers();
@@ -507,5 +516,17 @@ Oqtane.Interop = {
                 }
             }
         }
+    },
+    createCredential: async function (optionsResponse) {
+        const optionsJson = JSON.parse(optionsResponse);
+        const options = PublicKeyCredential.parseCreationOptionsFromJSON(optionsJson);
+        const credential = await navigator.credentials.create({ publicKey: options });
+        return JSON.stringify(credential);
+    },
+    requestCredential: async function (optionsResponse) {
+        const optionsJson = JSON.parse(optionsResponse);
+        const options = PublicKeyCredential.parseRequestOptionsFromJSON(optionsJson);
+        const credential = await navigator.credentials.get({ publicKey: options, undefined });
+        return JSON.stringify(credential);
     }
 };

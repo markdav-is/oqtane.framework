@@ -1,14 +1,21 @@
 using System.Collections.Generic;
+using Microsoft.Extensions.Localization;
 using Oqtane.Documentation;
-using Oqtane.Infrastructure;
 using Oqtane.Models;
 using Oqtane.Shared;
 
-namespace Oqtane.SiteTemplates
+namespace Oqtane.Infrastructure.SiteTemplates
 {
     [PrivateApi("Mark Site-Template classes as private, since it's not very useful in the public docs")]
     public class AdminSiteTemplate : ISiteTemplate
     {
+        private readonly IStringLocalizer<AdminSiteTemplate> _localizer;
+
+        public AdminSiteTemplate(IStringLocalizer<AdminSiteTemplate> localizer)
+        {
+            _localizer = localizer;
+        }
+
         public string Name
         {
             get { return "Admin Site Template"; } 
@@ -171,10 +178,72 @@ namespace Oqtane.SiteTemplates
 
             pageTemplates.Add(new PageTemplate
             {
+                Name = "Privacy",
+                Parent = "",
+                Path = "privacy",
+                Order = seed + 11,
+                Icon = Icons.Eye,
+                IsNavigation = false,
+                IsPersonalizable = false,
+                PermissionList = new List<Permission>
+                    {
+                        new Permission(PermissionNames.View, RoleNames.Everyone, true),
+                        new Permission(PermissionNames.View, RoleNames.Admin, true),
+                        new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                    },
+                PageTemplateModules = new List<PageTemplateModule>
+                    {
+                        new PageTemplateModule { ModuleDefinitionName = "Oqtane.Modules.HtmlText, Oqtane.Client", Title = "Privacy Policy", Pane = PaneNames.Default,
+                            PermissionList = new List<Permission> {
+                                new Permission(PermissionNames.View, RoleNames.Everyone, true),
+                                new Permission(PermissionNames.View, RoleNames.Admin, true),
+                                new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                            },
+                            Settings = new List<Setting> {
+                                new Setting { SettingName = "DynamicTokens", SettingValue = "true" }
+                            },
+                            Content = _localizer["Privacy"]
+                        }
+                    }
+            });
+
+            pageTemplates.Add(new PageTemplate
+            {
+                Name = "Terms",
+                Parent = "",
+                Path = "terms",
+                Order = seed + 13,
+                Icon = Icons.List,
+                IsNavigation = false,
+                IsPersonalizable = false,
+                PermissionList = new List<Permission>
+                    {
+                        new Permission(PermissionNames.View, RoleNames.Everyone, true),
+                        new Permission(PermissionNames.View, RoleNames.Admin, true),
+                        new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                    },
+                PageTemplateModules = new List<PageTemplateModule>
+                    {
+                        new PageTemplateModule { ModuleDefinitionName = "Oqtane.Modules.HtmlText, Oqtane.Client", Title = "Terms of Use", Pane = PaneNames.Default,
+                            PermissionList = new List<Permission> {
+                                new Permission(PermissionNames.View, RoleNames.Everyone, true),
+                                new Permission(PermissionNames.View, RoleNames.Admin, true),
+                                new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                            },
+                            Settings = new List<Setting> {
+                                new Setting { SettingName = "DynamicTokens", SettingValue = "true" }
+                            },
+                            Content = _localizer["Terms"]
+                        }
+                    }
+            });
+
+            pageTemplates.Add(new PageTemplate
+            {
                 Name = "Not Found",
                 Parent = "",
                 Path = "404",
-                Order = seed + 11,
+                Order = seed + 15,
                 Icon = Icons.X,
                 IsNavigation = false,
                 IsPersonalizable = false,
@@ -510,6 +579,62 @@ namespace Oqtane.SiteTemplates
                     }
                 }
             });
+            pageTemplates.Add(new PageTemplate
+            {
+                Name = "Language Management",
+                Parent = "Admin",
+                Order = 21,
+                Path = "admin/languages",
+                Icon = Icons.Text,
+                IsNavigation = false,
+                IsPersonalizable = false,
+                PermissionList = new List<Permission>
+                {
+                    new Permission(PermissionNames.View, RoleNames.Admin, true),
+                    new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                },
+                PageTemplateModules = new List<PageTemplateModule>
+                {
+                    new PageTemplateModule
+                    {
+                        ModuleDefinitionName = typeof(Oqtane.Modules.Admin.Languages.Index).ToModuleDefinitionName(), Title = "Language Management", Pane = PaneNames.Default,
+                        PermissionList = new List<Permission>
+                        {
+                            new Permission(PermissionNames.View, RoleNames.Admin, true),
+                            new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                        },
+                        Content = ""
+                    }
+                }
+            });
+            pageTemplates.Add(new PageTemplate
+            {
+                Name = "Global Replace",
+                Parent = "Admin",
+                Order = 23,
+                Path = "admin/replace",
+                Icon = Icons.LoopSquare,
+                IsNavigation = false,
+                IsPersonalizable = false,
+                PermissionList = new List<Permission>
+                {
+                    new Permission(PermissionNames.View, RoleNames.Admin, true),
+                    new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                },
+                PageTemplateModules = new List<PageTemplateModule>
+                {
+                    new PageTemplateModule
+                    {
+                        ModuleDefinitionName = typeof(Oqtane.Modules.Admin.GlobalReplace.Index).ToModuleDefinitionName(), Title = "Global Replace", Pane = PaneNames.Default,
+                        PermissionList = new List<Permission>
+                        {
+                            new Permission(PermissionNames.View, RoleNames.Admin, true),
+                            new Permission(PermissionNames.Edit, RoleNames.Admin, true)
+                        },
+                        Content = ""
+                    }
+                }
+            });
 
             // host pages (order starts at 51)
             pageTemplates.Add(new PageTemplate
@@ -626,41 +751,9 @@ namespace Oqtane.SiteTemplates
             });
             pageTemplates.Add(new PageTemplate
             {
-                Name = "Language Management",
-                Parent = "Admin",
-                Order = 59,
-                Path = "admin/languages",
-                Icon = Icons.Text,
-                IsNavigation = false,
-                IsPersonalizable = false,
-                PermissionList = new List<Permission>
-                {
-                    new Permission(PermissionNames.View, RoleNames.Host, true),
-                    new Permission(PermissionNames.Edit, RoleNames.Host, true),
-                    new Permission(PermissionNames.View, RoleNames.Admin, true),
-                    new Permission(PermissionNames.Edit, RoleNames.Admin, true)
-                },
-                PageTemplateModules = new List<PageTemplateModule>
-                {
-                    new PageTemplateModule
-                    {
-                        ModuleDefinitionName = typeof(Oqtane.Modules.Admin.Languages.Index).ToModuleDefinitionName(), Title = "Language Management", Pane = PaneNames.Default,
-                        PermissionList = new List<Permission>
-                        {
-                            new Permission(PermissionNames.View, RoleNames.Host, true),
-                            new Permission(PermissionNames.Edit, RoleNames.Host, true),
-                            new Permission(PermissionNames.View, RoleNames.Admin, true),
-                            new Permission(PermissionNames.Edit, RoleNames.Admin, true)
-                        },
-                        Content = ""
-                    }
-                }
-            });
-            pageTemplates.Add(new PageTemplate
-            {
                 Name = "Scheduled Jobs",
                 Parent = "Admin",
-                Order = 61,
+                Order = 59,
                 Path = "admin/jobs",
                 Icon = Icons.Timer,
                 IsNavigation = false,
@@ -688,7 +781,7 @@ namespace Oqtane.SiteTemplates
             {
                 Name = "Sql Management",
                 Parent = "Admin",
-                Order = 63,
+                Order = 61,
                 Path = "admin/sql",
                 Icon = Icons.Spreadsheet,
                 IsNavigation = false,
@@ -716,7 +809,7 @@ namespace Oqtane.SiteTemplates
             {
                 Name = "System Info",
                 Parent = "Admin",
-                Order = 65,
+                Order = 63,
                 Path = "admin/system",
                 Icon = Icons.MedicalCross,
                 IsNavigation = false,
@@ -744,7 +837,7 @@ namespace Oqtane.SiteTemplates
             {
                 Name = "System Update",
                 Parent = "Admin",
-                Order = 67,
+                Order = 65,
                 Path = "admin/update",
                 Icon = Icons.Aperture,
                 IsNavigation = false,
@@ -759,6 +852,34 @@ namespace Oqtane.SiteTemplates
                     new PageTemplateModule
                     {
                         ModuleDefinitionName = typeof(Oqtane.Modules.Admin.Upgrade.Index).ToModuleDefinitionName(), Title = "System Update", Pane = PaneNames.Default,
+                        PermissionList = new List<Permission>
+                        {
+                            new Permission(PermissionNames.View, RoleNames.Host, true),
+                            new Permission(PermissionNames.Edit, RoleNames.Host, true)
+                        },
+                        Content = ""
+                    }
+                }
+            });
+            pageTemplates.Add(new PageTemplate
+            {
+                Name = "Setting Management",
+                Parent = "Admin",
+                Order = 67,
+                Path = "admin/settings",
+                Icon = Icons.Cog,
+                IsNavigation = false,
+                IsPersonalizable = false,
+                PermissionList = new List<Permission>
+                {
+                    new Permission(PermissionNames.View, RoleNames.Host, true),
+                    new Permission(PermissionNames.Edit, RoleNames.Host, true)
+                },
+                PageTemplateModules = new List<PageTemplateModule>
+                {
+                    new PageTemplateModule
+                    {
+                        ModuleDefinitionName = typeof(Oqtane.Modules.Admin.Settings.Index).ToModuleDefinitionName(), Title = "Setting Management", Pane = PaneNames.Default,
                         PermissionList = new List<Permission>
                         {
                             new Permission(PermissionNames.View, RoleNames.Host, true),

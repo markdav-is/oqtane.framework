@@ -48,7 +48,7 @@
 
     private bool _initialized = false;
     private bool _installed = false;
-    private string _display = "display: none;";
+    private string _display = "display: none;"; // prevents flash on initial interactive page load
 
     private PageState _pageState { get; set; }
 
@@ -61,7 +61,7 @@
 
         if (Runtime == Runtimes.Hybrid)
         {
-             var installation = await InstallationService.IsInstalled();
+            var installation = await InstallationService.IsInstalled();
             _installed = installation.Success;
             if (installation.Alias != null)
             {
@@ -73,8 +73,8 @@
             if (PageState != null)
             {
                 _pageState = PageState;
-                SiteState.Alias = PageState.Alias;
-                SiteState.RemoteIPAddress = (PageState != null) ? PageState.RemoteIPAddress : "";
+                SiteState.Alias = _pageState.Alias;
+                SiteState.RemoteIPAddress = _pageState.RemoteIPAddress;
                 _installed = true;
             }
         }
@@ -85,7 +85,6 @@
     {
         if (firstRender)
         {
-            // prevents flash on initial interactive page load
             _display = "";
             StateHasChanged();
         }

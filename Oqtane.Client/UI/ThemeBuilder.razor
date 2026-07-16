@@ -20,13 +20,6 @@
             return;
         }
 
-        // force authenticated user to provide email address (email may be missing if using external login)
-        if (PageState.User != null && PageState.User.IsAuthenticated && string.IsNullOrEmpty(PageState.User.Email) && PageState.Route.PagePath != "profile")
-        {
-            NavigationManager.NavigateTo(Utilities.NavigateUrl(PageState.Alias.Path, "profile", "returnurl=" + WebUtility.UrlEncode(PageState.Route.PathAndQuery)));
-            return;
-        }
-
         // set page title
         if (!string.IsNullOrEmpty(PageState.Page.Title))
         {
@@ -233,39 +226,5 @@
             }
         }
         return stylesheets;
-    }
-
-    private string ManageScripts(List<Resource> resources, Alias alias)
-    {
-        var scripts = "";
-        if (resources != null)
-        {
-            foreach (var resource in resources.Where(item => item.ResourceType == ResourceType.Script && item.Location == ResourceLocation.Head))
-            {
-                var script = CreateScript(resource, alias);
-                if (!scripts.Contains(script, StringComparison.OrdinalIgnoreCase))
-                {
-                    scripts += script + Environment.NewLine;
-                }
-            }
-        }
-        return scripts;
-    }
-
-    private string CreateScript(Resource resource, Alias alias)
-    {
-        if (!string.IsNullOrEmpty(resource.Url))
-        {
-            var url = (resource.Url.Contains("://")) ? resource.Url : alias.BaseUrl + resource.Url;
-            return "<script src=\"" + url + "\"" +
-                ((!string.IsNullOrEmpty(resource.Integrity)) ? " integrity=\"" + resource.Integrity + "\"" : "") +
-                ((!string.IsNullOrEmpty(resource.CrossOrigin)) ? " crossorigin=\"" + resource.CrossOrigin + "\"" : "") +
-                "></script>";
-        }
-        else
-        {
-            // inline script
-            return "<script>" + resource.Content + "</script>";
-        }
     }
 }

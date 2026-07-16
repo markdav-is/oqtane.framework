@@ -8,12 +8,25 @@ using Microsoft.Extensions.DependencyInjection;
 using Oqtane.Enums;
 using Oqtane.Infrastructure;
 using Oqtane.Models;
-using Oqtane.Modules;
 using Oqtane.Shared;
 using Module = Oqtane.Models.Module;
 
 namespace Oqtane.Repository
 {
+    public interface ISiteRepository
+    {
+        IEnumerable<Site> GetSites();
+        Site AddSite(Site site);
+        Site UpdateSite(Site site);
+        Site GetSite(int siteId);
+        Site GetSite(int siteId, bool tracking);
+        void DeleteSite(int siteId);
+
+        string ProcessSiteMigrations(Alias alias, Site site);
+        string ProcessPageTemplates(Alias alias, Site site, string version);
+        void CreatePages(Site site, List<PageTemplate> pageTemplates, Alias alias);
+    }
+
     public class SiteRepository : ISiteRepository
     {
         private readonly IDbContextFactory<TenantDBContext> _factory;
@@ -25,15 +38,16 @@ namespace Oqtane.Repository
         private readonly IPageModuleRepository _pageModuleRepository;
         private readonly IModuleDefinitionRepository _moduleDefinitionRepository;
         private readonly IThemeRepository _themeRepository;
+        private readonly ISettingRepository _settingRepository;
         private readonly IServiceProvider _serviceProvider;
         private readonly IConfigurationRoot _config;
-        private readonly IServerStateManager _serverState;
+        private readonly ITenantManager _tenantManager;
+        private readonly ICacheManager _cache;
         private readonly ILogManager _logger;
-        private static readonly object _lock = new object();
 
         public SiteRepository(IDbContextFactory<TenantDBContext> factory, IRoleRepository roleRepository, IProfileRepository profileRepository, IFolderRepository folderRepository, IPageRepository pageRepository,
-            IModuleRepository moduleRepository, IPageModuleRepository pageModuleRepository, IModuleDefinitionRepository moduleDefinitionRepository, IThemeRepository themeRepository, IServiceProvider serviceProvider,
-            IConfigurationRoot config, IServerStateManager serverState, ILogManager logger)
+            IModuleRepository moduleRepository, IPageModuleRepository pageModuleRepository, IModuleDefinitionRepository moduleDefinitionRepository, IThemeRepository themeRepository, ISettingRepository settingRepository,
+            IServiceProvider serviceProvider, IConfigurationRoot config, ITenantManager tenantManager, ICacheManager cache, ILogManager logger)
         {
             _factory = factory;
             _roleRepository = roleRepository;
@@ -44,16 +58,21 @@ namespace Oqtane.Repository
             _pageModuleRepository = pageModuleRepository;
             _moduleDefinitionRepository = moduleDefinitionRepository;
             _themeRepository = themeRepository;
+            _settingRepository = settingRepository;
             _serviceProvider = serviceProvider;
             _config = config;
-            _serverState = serverState;
+            _tenantManager = tenantManager;
+            _cache = cache;
             _logger = logger;
         }
 
         public IEnumerable<Site> GetSites()
         {
-            using var db = _factory.CreateDbContext();
-            return db.Site.OrderBy(item => item.Name).ToList();
+            return _cache.GetCache(GetCacheKey(), entry =>
+            {
+                using var db = _factory.CreateDbContext();
+                return db.Site.OrderBy(item => item.Name).ToList();
+            });
         }
 
         public Site AddSite(Site site)
@@ -63,6 +82,7 @@ namespace Oqtane.Repository
             db.Site.Add(site);
             db.SaveChanges();
             CreateSite(site);
+            _cache.RemoveCache(GetCacheKey());
             return site;
         }
 
@@ -71,6 +91,7 @@ namespace Oqtane.Repository
             using var db = _factory.CreateDbContext();
             db.Entry(site).State = EntityState.Modified;
             db.SaveChanges();
+            _cache.RemoveCache(GetCacheKey());
             return site;
         }
 
@@ -81,61 +102,26 @@ namespace Oqtane.Repository
 
         public Site GetSite(int siteId, bool tracking)
         {
-            using var db = _factory.CreateDbContext();
-            if (tracking)
-            {
-                return db.Site.Find(siteId);
-            }
-            else
-            {
-                return db.Site.AsNoTracking().FirstOrDefault(item => item.SiteId == siteId);
-            }
+            // note that tracking parameter is no longer relevant
+            return GetSites().FirstOrDefault(item => item.SiteId == siteId);
         }
 
         public void DeleteSite(int siteId)
         {
+            foreach (var role in _roleRepository.GetRoles(siteId, false))
+            {
+                _roleRepository.DeleteRole(role.RoleId);
+            }
+
             using var db = _factory.CreateDbContext();
             var site = db.Site.Find(siteId);
             db.Site.Remove(site);
             db.SaveChanges();
+            _cache.RemoveCache(GetCacheKey());
         }
 
 
-        public void InitializeSite(Alias alias)
-        {
-            var serverstate = _serverState.GetServerState(alias.SiteKey);
-            if (!serverstate.IsInitialized)
-            {
-                // ensure site initialization is only executed once
-                lock (_lock)
-                {
-                    if (!serverstate.IsInitialized)
-                    {
-                        var site = GetSite(alias.SiteId);
-                        if (site != null)
-                        {
-                            // initialize theme Assemblies
-                            site.Themes = _themeRepository.GetThemes().ToList();
-
-                            // initialize module Assemblies
-                            var moduleDefinitions = _moduleDefinitionRepository.GetModuleDefinitions(alias.SiteId);
-
-                            // execute migrations
-                            var version = ProcessSiteMigrations(alias, site);
-                            version = ProcessPageTemplates(alias, site, moduleDefinitions, version);
-                            if (site.Version != version)
-                            {
-                                site.Version = version;
-                                UpdateSite(site);
-                            }
-                        }
-                        serverstate.IsInitialized = true;
-                    }
-                }
-            } 
-        }
-
-        private string ProcessSiteMigrations(Alias alias, Site site)
+        public string ProcessSiteMigrations(Alias alias, Site site)
         {
             var version = site.Version;
             var assemblies = AppDomain.CurrentDomain.GetOqtaneAssemblies();
@@ -148,7 +134,7 @@ namespace Oqtane.Repository
                         var attribute = (SiteMigrationAttribute)Attribute.GetCustomAttribute(type, typeof(SiteMigrationAttribute));
                         if (attribute.AliasName == "*" || attribute.AliasName == alias.Name)
                         {
-                            if (string.IsNullOrEmpty(site.Version) || Version.Parse(attribute.Version) > Version.Parse(site.Version))
+                            if (string.IsNullOrEmpty(site.Version) || attribute.Version == "*" || Version.Parse(attribute.Version) > Version.Parse(site.Version))
                             {
                                 try
                                 {
@@ -156,14 +142,14 @@ namespace Oqtane.Repository
                                     if (obj != null)
                                     {
                                         obj.Up(site, alias);
-                                        _logger.Log(LogLevel.Information, "Site Migration", LogFunction.Other, "Site Migrated Successfully To Version {version} For {Alias}", version, alias.Name);
+                                        _logger.Log(LogLevel.Information, "Site Migration", LogFunction.Other, "Site Migrated Successfully For {Alias} And Version {version}", alias.Name, attribute.Version);
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    _logger.Log(LogLevel.Error, "Site Migration", LogFunction.Other, ex, "An Error Occurred Executing Site Migration {Type} For {Alias} And Version {Version}", type, alias.Name, version);
+                                    _logger.Log(LogLevel.Error, "Site Migration", LogFunction.Other, ex, "An Error Occurred Executing Site Migration {Type} For {Alias} And Version {Version}", type, alias.Name, attribute.Version);
                                 }
-                                if (string.IsNullOrEmpty(version) || Version.Parse(attribute.Version) > Version.Parse(version))
+                                if (attribute.Version != "*" && (string.IsNullOrEmpty(version) || Version.Parse(attribute.Version) > Version.Parse(version)))
                                 {
                                     version = attribute.Version;
                                 }
@@ -175,10 +161,11 @@ namespace Oqtane.Repository
             return version;
         }
 
-        private string ProcessPageTemplates(Alias alias, Site site, IEnumerable<ModuleDefinition> moduleDefinitions, string version)
+        public string ProcessPageTemplates(Alias alias, Site site, string version)
         {
             var pageTemplates = new List<PageTemplate>();
-            foreach (var moduleDefinition in moduleDefinitions)
+
+            foreach (var moduleDefinition in _moduleDefinitionRepository.GetModuleDefinitions(site.SiteId))
             {
                 if (moduleDefinition.PageTemplates != null)
                 {
@@ -231,21 +218,21 @@ namespace Oqtane.Repository
             _roleRepository.AddRole(new Role {SiteId = site.SiteId, Name = RoleNames.Admin, Description = RoleNames.Admin, IsAutoAssigned = false, IsSystem = true});
 
             _profileRepository.AddProfile(new Profile
-            { SiteId = site.SiteId, Name = "FirstName", Title = "First Name", Description = "Your First Or Given Name", Category = "Name", ViewOrder = 1, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "FirstName", Title = "First Name", Description = "Your First Or Given Name", Category = "Name", ViewOrder = 10, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
             _profileRepository.AddProfile(new Profile
-            { SiteId = site.SiteId, Name = "LastName", Title = "Last Name", Description = "Your Last Or Family Name", Category = "Name", ViewOrder = 2, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "LastName", Title = "Last Name", Description = "Your Last Or Family Name", Category = "Name", ViewOrder = 20, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
             _profileRepository.AddProfile(new Profile
-            { SiteId = site.SiteId, Name = "Street", Title = "Street", Description = "Street Or Building Address", Category = "Address", ViewOrder = 3, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "Street", Title = "Street", Description = "Street Or Building Address", Category = "Address", ViewOrder = 30, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
             _profileRepository.AddProfile(new Profile 
-            { SiteId = site.SiteId, Name = "City", Title = "City", Description = "City", Category = "Address", ViewOrder = 4, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "City", Title = "City", Description = "City", Category = "Address", ViewOrder = 40, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
             _profileRepository.AddProfile(new Profile
-            { SiteId = site.SiteId, Name = "Region", Title = "Region", Description = "State Or Province", Category = "Address", ViewOrder = 5, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "Region", Title = "Region", Description = "State Or Province", Category = "Address", ViewOrder = 50, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
             _profileRepository.AddProfile(new Profile
-            { SiteId = site.SiteId, Name = "Country", Title = "Country", Description = "Country", Category = "Address", ViewOrder = 6, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "Country", Title = "Country", Description = "Country", Category = "Address", ViewOrder = 60, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
             _profileRepository.AddProfile(new Profile
-            { SiteId = site.SiteId, Name = "PostalCode", Title = "Postal Code", Description = "Postal Code Or Zip Code", Category = "Address", ViewOrder = 7, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "PostalCode", Title = "Postal Code", Description = "Postal Code Or Zip Code", Category = "Address", ViewOrder = 70, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
             _profileRepository.AddProfile(new Profile
-            { SiteId = site.SiteId, Name = "Phone", Title = "Phone Number", Description = "Phone Number", Category = "Contact", ViewOrder = 8, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
+            { SiteId = site.SiteId, Name = "Phone", Title = "Phone Number", Description = "Phone Number", Category = "Contact", ViewOrder = 80, MaxLength = 50, DefaultValue = "", IsRequired = false, IsPrivate = false, Options = "", Rows = 1 });
 
             Folder folder = _folderRepository.AddFolder(new Folder
             {
@@ -339,6 +326,7 @@ namespace Oqtane.Repository
                             }
                             pageTemplate.Path = (parent != null) ? parent.Path + "/" + pageTemplate.Name : pageTemplate.Name;
                         }
+                        // home page path can be specified with "home" or "/"
                         pageTemplate.Path = (pageTemplate.Path.ToLower() == "home") ? "" : pageTemplate.Path;
                         pageTemplate.Path = (pageTemplate.Path == "/") ? "" : pageTemplate.Path;
                         var page = pages.FirstOrDefault(item => item.Path.ToLower() == pageTemplate.Path.ToLower());
@@ -391,6 +379,7 @@ namespace Oqtane.Repository
                                     {
                                         _logger.Log(LogLevel.Information, "Site Template", LogFunction.Update, "Page Updated {Page}", page);
                                     }
+                                    UpdateSettings(EntityNames.Page, page.PageId, pageTemplate.Settings);
                                 }
                             }
                             else
@@ -401,6 +390,7 @@ namespace Oqtane.Repository
                                 {
                                     _logger.Log(LogLevel.Information, "Site Template", LogFunction.Create, "Page Added {Page}", page);
                                 }
+                                UpdateSettings(EntityNames.Page, page.PageId, pageTemplate.Settings);
                             }
                         }
                         catch (Exception ex)
@@ -437,6 +427,8 @@ namespace Oqtane.Repository
                                 pageModule.Pane = (string.IsNullOrEmpty(pageTemplateModule.Pane)) ? PaneNames.Default : pageTemplateModule.Pane;
                                 pageModule.Order = (pageTemplateModule.Order == 0) ? 1 : pageTemplateModule.Order;
                                 pageModule.ContainerType = pageTemplateModule.ContainerType;
+                                pageModule.Header = pageTemplateModule.Header;
+                                pageModule.Footer = pageTemplateModule.Footer;
                                 pageModule.IsDeleted = pageTemplateModule.IsDeleted;
                                 pageModule.Module.PermissionList = new List<Permission>();
                                 foreach (var permission in pageTemplateModule.PermissionList)
@@ -457,6 +449,7 @@ namespace Oqtane.Repository
                                             {
                                                 _logger.Log(LogLevel.Information, "Site Template", LogFunction.Update, "Page Module Updated {PageModule}", pageModule);
                                             }
+                                            UpdateSettings(EntityNames.Module, pageModule.Module.ModuleId, pageTemplateModule.Settings);
                                         }
                                         else
                                         {
@@ -465,7 +458,27 @@ namespace Oqtane.Repository
                                     }
                                     else
                                     {
-                                        var module = _moduleRepository.AddModule(pageModule.Module);
+                                        Module module = null;
+                                        if (pageTemplateModule.FromPagePath != "")
+                                        {
+                                            // used for modules shared across pages
+                                            var pagePath = pageTemplateModule.FromPagePath;
+                                            pagePath = (pagePath.ToLower() == "home") ? "" : pagePath;
+                                            pagePath = (pagePath == "/") ? "" : pagePath;
+                                            if (pages.Any(item => item.Path.ToLower() == pagePath.ToLower()))
+                                            {
+                                                var pageId = pages.First(item => item.Path.ToLower() == pagePath.ToLower()).PageId;
+                                                if (pageModules.Any(item => item.PageId == pageId && item.Module.ModuleDefinitionName == pageTemplateModule.ModuleDefinitionName && item.Title.ToLower() == pageTemplateModule.Title.ToLower()))
+                                                {
+                                                    module = pageModules.FirstOrDefault(item => item.PageId == pageId && item.Module.ModuleDefinitionName == pageTemplateModule.ModuleDefinitionName && item.Title.ToLower() == pageTemplateModule.Title.ToLower()).Module;
+                                                }
+                                            }
+                                        }
+                                        if (module == null)
+                                        {
+                                            module = _moduleRepository.AddModule(pageModule.Module);
+                                        }
+
                                         pageModule.ModuleId = module.ModuleId;
                                         pageModule.Module = null; // remove tracking
                                         _pageModuleRepository.AddPageModule(pageModule);
@@ -475,6 +488,7 @@ namespace Oqtane.Repository
                                         {
                                             _logger.Log(LogLevel.Information, "Site Template", LogFunction.Create, "Page Module Added {PageModule}", pageModule);
                                         }
+                                        UpdateSettings(EntityNames.Module, pageModule.Module.ModuleId, pageTemplateModule.Settings);
                                     }
 
                                 }
@@ -485,27 +499,14 @@ namespace Oqtane.Repository
                                         _logger.Log(LogLevel.Error, "Site Template", LogFunction.Other, ex, "Error Processing Page Module {PageModule}", pageModule);
                                     }
                                 }
-
-                                if (pageTemplateModule.Content != "" && moduleDefinition.ServerManagerType != "")
+                                if (!string.IsNullOrEmpty(pageTemplateModule.Content))
                                 {
-                                    Type moduletype = Type.GetType(moduleDefinition.ServerManagerType);
-                                    if (moduletype != null && moduletype.GetInterface(nameof(IPortable)) != null)
+                                    var module = _moduleRepository.GetModule(pageModule.ModuleId);
+                                    if (!_moduleRepository.ImportModule(module, pageTemplateModule.Content, "Site Template"))
                                     {
-                                        try
+                                        if (alias != null)
                                         {
-                                            var module = _moduleRepository.GetModule(pageModule.ModuleId);
-                                            if (module != null)
-                                            {
-                                                var moduleobject = ActivatorUtilities.CreateInstance(_serviceProvider, moduletype);
-                                                ((IPortable)moduleobject).ImportModule(module, pageTemplateModule.Content, moduleDefinition.Version);
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            if (alias != null)
-                                            {
-                                                _logger.Log(LogLevel.Error, "Site Template", LogFunction.Other, ex, "Error Importing Content For {ModuleDefinitionName}", pageTemplateModule.ModuleDefinitionName);
-                                            }
+                                            _logger.Log(LogLevel.Error, "Site Template", LogFunction.Other, "Error Importing Content For {ModuleDefinitionName}", pageTemplateModule.ModuleDefinitionName);
                                         }
                                     }
                                 }
@@ -521,6 +522,32 @@ namespace Oqtane.Repository
                     }
                 }
             }
+        }
+
+        private void UpdateSettings(string entityName, int entityId, List<Setting> templateSettings)
+        {
+            foreach (var templateSetting in templateSettings)
+            {
+                var setting = _settingRepository.GetSetting(entityName, entityId, templateSetting.SettingName);
+                if (setting == null)
+                {
+                    templateSetting.EntityName = entityName;
+                    templateSetting.EntityId = entityId;
+                    _settingRepository.AddSetting(templateSetting);
+                }
+                else
+                {
+                    setting.SettingValue = templateSetting.SettingValue;
+                    setting.IsPrivate = templateSetting.IsPrivate;
+                    _settingRepository.UpdateSetting(setting);
+                }
+            }
+        }
+
+        private string GetCacheKey()
+        {
+            var tenant = _tenantManager.GetTenant();
+            return $"Tenant:{tenant?.TenantId}:Sites";
         }
     }
 }

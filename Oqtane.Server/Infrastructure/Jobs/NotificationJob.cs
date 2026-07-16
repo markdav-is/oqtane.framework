@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
-using System.Net.Mail;
+using System.Threading.Tasks;
+using MailKit.Net.Smtp;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Identity.Client;
+using MimeKit;
 using Oqtane.Models;
 using Oqtane.Repository;
 using Oqtane.Shared;
+using MailKit.Security;
 
 namespace Oqtane.Infrastructure
 {
@@ -23,7 +26,7 @@ namespace Oqtane.Infrastructure
         }
 
         // job is executed for each tenant in installation
-        public override string ExecuteJob(IServiceProvider provider)
+        public async override Task<string> ExecuteJobAsync(IServiceProvider provider)
         {
             string log = "";
 
@@ -35,148 +38,268 @@ namespace Oqtane.Infrastructure
 
             // iterate through sites for current tenant
             List<Site> sites = siteRepository.GetSites().ToList();
-            foreach (Site site in sites)
+            foreach (Site site in sites.Where(item => !item.IsDeleted))
             {
                 log += "Processing Notifications For Site: " + site.Name + "<br />";
 
-                // get site settings
-                List<Setting> sitesettings = settingRepository.GetSettings(EntityNames.Site, site.SiteId).ToList();
-                Dictionary<string, string> settings = GetSettings(sitesettings);
-                if (!site.IsDeleted && (!settings.ContainsKey("SMTPEnabled") || settings["SMTPEnabled"] == "True"))
+                List<Notification> notifications = notificationRepository.GetNotifications(site.SiteId, -1, -1).ToList();
+                if (notifications.Count > 0)
                 {
-                    if (settings.ContainsKey("SMTPHost") && settings["SMTPHost"] != "" &&
-                        settings.ContainsKey("SMTPPort") && settings["SMTPPort"] != "" &&
-                        settings.ContainsKey("SMTPSSL") && settings["SMTPSSL"] != "" &&
-                        settings.ContainsKey("SMTPSender") && settings["SMTPSender"] != "")
+                    // get site settings
+                    var settings = settingRepository.GetSettings(EntityNames.Site, site.SiteId, EntityNames.Host, -1);
+
+                    if (settingRepository.GetSettingValue(settings, "SMTPEnabled", "True") == "True")
                     {
-                        // construct SMTP Client 
-                        var client = new SmtpClient()
+                        bool valid = true;
+                        if (settingRepository.GetSettingValue(settings, "SMTPAuthentication", "Basic") == "Basic")
                         {
-                            DeliveryMethod = SmtpDeliveryMethod.Network,
-                            UseDefaultCredentials = false,
-                            Host = settings["SMTPHost"],
-                            Port = int.Parse(settings["SMTPPort"]),
-                            EnableSsl = bool.Parse(settings["SMTPSSL"])
-                        };
-                        if (settings["SMTPUsername"] != "" && settings["SMTPPassword"] != "")
+                            // basic
+                            if (settingRepository.GetSettingValue(settings, "SMTPHost", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPPort", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPSender", "") == "")
+                            {
+                                log += "SMTP Not Configured Properly In Site Settings - Host, Port, And Sender Are All Required" + "<br />";
+                                valid = false;
+                            }
+                        }
+                        else
                         {
-                            client.Credentials = new NetworkCredential(settings["SMTPUsername"], settings["SMTPPassword"]);
+                            // oauth
+                            if (settingRepository.GetSettingValue(settings, "SMTPHost", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPPort", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPAuthority", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPClientId", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPClientSecret", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPScopes", "") == "" ||
+                                settingRepository.GetSettingValue(settings, "SMTPSender", "") == "")
+                            {
+                                log += "SMTP Not Configured Properly In Site Settings - Host, Port, Authority, Client ID, Client Secret, Scopes, And Sender Are All Required" + "<br />";
+                                valid = false;
+                            }
                         }
 
-                        // iterate through undelivered notifications
-                        int sent = 0;
-                        List<Notification> notifications = notificationRepository.GetNotifications(site.SiteId, -1, -1).ToList();
-                        foreach (Notification notification in notifications)
+                        if (valid)
                         {
-                            // get sender and receiver information from user object if not provided
-                            if ((string.IsNullOrEmpty(notification.FromEmail) || string.IsNullOrEmpty(notification.FromDisplayName)) && notification.FromUserId != null)
+                            // construct SMTP Client
+                            using var client = new SmtpClient();
+
+                            try
                             {
-                                var user = userRepository.GetUser(notification.FromUserId.Value);
-                                if (user != null)
+                                var secureSocketOptions = SecureSocketOptions.Auto;
+                                switch (settingRepository.GetSettingValue(settings, "SMTPSSL", "Auto"))
                                 {
-                                    notification.FromEmail = (string.IsNullOrEmpty(notification.FromEmail)) ? user.Email : notification.FromEmail;
-                                    notification.FromDisplayName = (string.IsNullOrEmpty(notification.FromDisplayName)) ? user.DisplayName : notification.FromDisplayName;
+                                    case "None":
+                                        secureSocketOptions = SecureSocketOptions.None;
+                                        break;
+                                    case "Auto":
+                                        secureSocketOptions = SecureSocketOptions.Auto;
+                                        break;
+                                    case "StartTls":
+                                        secureSocketOptions = SecureSocketOptions.StartTls;
+                                        break;
+                                    case "SslOnConnect":
+                                    case "True": // legacy setting value
+                                        secureSocketOptions = SecureSocketOptions.SslOnConnect;
+                                        break;
+                                    case "StartTlsWhenAvailable":
+                                    case "False": // legacy setting value
+                                        secureSocketOptions = SecureSocketOptions.StartTlsWhenAvailable;
+                                        break;
                                 }
+
+                                await client.ConnectAsync(settingRepository.GetSettingValue(settings, "SMTPHost", ""),
+                                        int.Parse(settingRepository.GetSettingValue(settings, "SMTPPort", "")),
+                                        secureSocketOptions);
                             }
-                            if ((string.IsNullOrEmpty(notification.ToEmail) || string.IsNullOrEmpty(notification.ToDisplayName)) && notification.ToUserId != null)
+                            catch (Exception ex)
                             {
-                                var user = userRepository.GetUser(notification.ToUserId.Value);
-                                if (user != null)
-                                {
-                                    notification.ToEmail = (string.IsNullOrEmpty(notification.ToEmail)) ? user.Email : notification.ToEmail;
-                                    notification.ToDisplayName = (string.IsNullOrEmpty(notification.ToDisplayName)) ? user.DisplayName : notification.ToDisplayName;
-                                }
+                                log += "SMTP Not Configured Properly In Site Settings - Could Not Connect To SMTP Server - " + ex.Message + "<br />";
+                                valid = false;
                             }
 
-                            // validate recipient
-                            if (string.IsNullOrEmpty(notification.ToEmail) || !MailAddress.TryCreate(notification.ToEmail, out _))
+                            if (valid)
                             {
-                                log += $"NotificationId: {notification.NotificationId} - Has Missing Or Invalid Recipient {notification.ToEmail}<br />";
-                                notification.IsDeleted = true;
-                                notificationRepository.UpdateNotification(notification);
-                            }
-                            else
-                            {
-                                MailMessage mailMessage = new MailMessage();
-
-                                // sender
-                                if (settings.ContainsKey("SMTPRelay") && settings["SMTPRelay"] == "True" && !string.IsNullOrEmpty(notification.FromEmail))
+                                if (settingRepository.GetSettingValue(settings, "SMTPAuthentication", "Basic") == "Basic")
                                 {
-                                    if (!string.IsNullOrEmpty(notification.FromDisplayName))
+                                    if (settingRepository.GetSettingValue(settings, "SMTPUsername", "") != "" && settingRepository.GetSettingValue(settings, "SMTPPassword", "") != "")
                                     {
-                                        mailMessage.From = new MailAddress(notification.FromEmail, notification.FromDisplayName);
+                                        try
+                                        {
+                                            await client.AuthenticateAsync(settingRepository.GetSettingValue(settings, "SMTPUsername", ""),
+                                            settingRepository.GetSettingValue(settings, "SMTPPassword", ""));
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            log += "SMTP Not Configured Properly In Site Settings - Basic Authentication Failed Using Username And Password - " + ex.Message + "<br />";
+                                            valid = false;
+                                        }
+
                                     }
                                     else
                                     {
-                                        mailMessage.From = new MailAddress(notification.FromEmail);
+                                        // it is possible to use basic without any authentication (not recommended)
                                     }
                                 }
                                 else
                                 {
-                                    mailMessage.From = new MailAddress(settings["SMTPSender"], (!string.IsNullOrEmpty(notification.FromDisplayName)) ? notification.FromDisplayName : site.Name);
-                                }
-
-                                // recipient
-                                if (!string.IsNullOrEmpty(notification.ToDisplayName))
-                                {
-                                    mailMessage.To.Add(new MailAddress(notification.ToEmail, notification.ToDisplayName));
-                                }
-                                else
-                                {
-                                    mailMessage.To.Add(new MailAddress(notification.ToEmail));
-                                }
-
-                                // subject
-                                mailMessage.Subject = notification.Subject;
-
-                                //body
-                                mailMessage.Body = notification.Body.Replace("\n", "<br />");
-
-                                // encoding
-                                mailMessage.SubjectEncoding = System.Text.Encoding.UTF8;
-                                mailMessage.BodyEncoding = System.Text.Encoding.UTF8;
-                                mailMessage.IsBodyHtml = true;
-
-                                // send mail
-                                try
-                                {
-                                    client.Send(mailMessage);
-                                    sent++;
-                                    notification.IsDelivered = true;
-                                    notification.DeliveredOn = DateTime.UtcNow;
-                                    notificationRepository.UpdateNotification(notification);
-                                }
-                                catch (Exception ex)
-                                {
-                                    // error
-                                    log += $"NotificationId: {notification.NotificationId} - {ex.Message}<br />";
+                                    // oauth authentication
+                                    var confidentialClientApplication = ConfidentialClientApplicationBuilder.Create(settingRepository.GetSettingValue(settings, "SMTPClientId", ""))
+                                        .WithAuthority(settingRepository.GetSettingValue(settings, "SMTPAuthority", ""))
+                                        .WithClientSecret(settingRepository.GetSettingValue(settings, "SMTPClientSecret", ""))
+                                        .Build();
+                                    try
+                                    {
+                                        var result = await confidentialClientApplication.AcquireTokenForClient(settingRepository.GetSettingValue(settings, "SMTPScopes", "").Split(',')).ExecuteAsync();
+                                        var oauth2 = new SaslMechanismOAuth2(settingRepository.GetSettingValue(settings, "SMTPSender", ""), result.AccessToken);
+                                        await client.AuthenticateAsync(oauth2);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        log += "SMTP Not Configured Properly In Site Settings - OAuth Token Could Not Be Retrieved From Authority - " + ex.Message + "<br />";
+                                        valid = false;
+                                    }
                                 }
                             }
+
+                            if (valid)
+                            {
+                                // iterate through undelivered notifications
+                                int sent = 0;
+                                foreach (Notification notification in notifications)
+                                {
+                                    var fromEmail = notification.FromEmail ?? "";
+                                    var fromName = notification.FromDisplayName ?? "";
+                                    var toEmail = notification.ToEmail ?? "";
+                                    var toName = notification.ToDisplayName ?? "";
+
+                                    // get sender from user information if "from" email or name is not specified and user id is available
+                                    if ((string.IsNullOrEmpty(fromEmail) || string.IsNullOrEmpty(fromName)) && notification.FromUserId != null)
+                                    {
+                                        var user = userRepository.GetUser(notification.FromUserId.Value);
+                                        if (user != null)
+                                        {
+                                            fromEmail = string.IsNullOrEmpty(fromEmail) ? user.Email ?? "" : fromEmail;
+                                            fromName = string.IsNullOrEmpty(fromName) ? user.DisplayName ?? "" : fromName;
+                                        }
+                                    }
+                                    fromName = string.IsNullOrEmpty(fromName) ? site.Name : fromName;
+
+                                    // get recipient from user information if "to" email or name is not specified and user id is available
+                                    if ((string.IsNullOrEmpty(toEmail) || string.IsNullOrEmpty(toName)) && notification.ToUserId != null)
+                                    {
+                                        var user = userRepository.GetUser(notification.ToUserId.Value);
+                                        if (user != null)
+                                        {
+                                            toEmail = string.IsNullOrEmpty(toEmail) ? user.Email ?? "" : toEmail;
+                                            toName = string.IsNullOrEmpty(toName) ? user.DisplayName ?? "" : toName;
+                                        }
+                                    }
+
+                                    // create mailbox addresses
+                                    MailboxAddress from = null;
+                                    MailboxAddress to = null;
+                                    MailboxAddress replyTo = null;
+                                    var mailboxAddressValidationError = "";
+
+                                    // always send from SMTP Sender
+                                    if (MailboxAddress.TryParse(settingRepository.GetSettingValue(settings, "SMTPSender", ""), out from))
+                                    {
+                                        from.Name = fromName; 
+                                    }
+                                    else
+                                    {
+                                        mailboxAddressValidationError += $" Invalid Sender: {fromName} &lt;{settingRepository.GetSettingValue(settings, "SMTPSender", "")}&gt;";
+                                    }
+
+                                    // reply to
+                                    if (!string.IsNullOrEmpty(fromEmail) && fromEmail != from.Address)
+                                    {
+                                        if (MailboxAddress.TryParse(fromEmail, out replyTo))
+                                        {
+                                            replyTo.Name = fromName; 
+                                        }
+                                    }
+
+                                    // recipient
+                                    if (MailboxAddress.TryParse(toEmail, out to))
+                                    {
+                                        to.Name = toName; 
+                                    }
+                                    else
+                                    {
+                                        mailboxAddressValidationError += $" Invalid Recipient: {toName} &lt;{toEmail}&gt;";
+                                    }
+
+                                    // if mailbox addresses are valid
+                                    if (from != null && to != null)
+                                    {
+                                        // create mail message
+                                        MimeMessage mailMessage = new MimeMessage();
+                                        mailMessage.From.Add(from);
+                                        mailMessage.To.Add(to);
+                                        if (replyTo != null)
+                                        {
+                                            mailMessage.ReplyTo.Add(replyTo);
+                                        }
+
+                                        // subject
+                                        mailMessage.Subject = notification.Subject;
+
+                                        // body
+                                        var bodyText = notification.Body;
+
+                                        if (!bodyText.Contains('<') || !bodyText.Contains('>'))
+                                        {
+                                            // plain text messages should convert line breaks to HTML tags to preserve formatting
+                                            bodyText = bodyText.Replace("\n", "<br />");
+                                        }
+
+                                        mailMessage.Body = new TextPart("html", System.Text.Encoding.UTF8)
+                                        {
+                                            Text = bodyText
+                                        };
+
+                                        // send mail
+                                        try
+                                        {
+                                            await client.SendAsync(mailMessage);
+                                            sent++;
+                                            notification.IsDelivered = true;
+                                            notification.DeliveredOn = DateTime.UtcNow;
+                                            notificationRepository.UpdateNotification(notification);
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            log += $"Error Sending Notification Id: {notification.NotificationId} - {ex.Message}<br />";
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // invalid mailbox address
+                                        log += $"Notification Id: {notification.NotificationId} Has An {mailboxAddressValidationError} And Has Been Deleted<br />";
+                                        notification.IsDeleted = true;
+                                        notificationRepository.UpdateNotification(notification);
+                                    }
+                                }
+
+                                log += "Notifications Delivered: " + sent + "<br />";
+                            }
+
+                            await client.DisconnectAsync(true);
                         }
-                        log += "Notifications Delivered: " + sent + "<br />";
                     }
                     else
                     {
-                        log += "SMTP Not Configured Properly In Site Settings - Host, Port, SSL, And Sender Are All Required" + "<br />";
+                        log += "SMTP Disabled In Site Settings<br />";
                     }
                 }
                 else
                 {
-                    log += "Site Deleted Or SMTP Disabled In Site Settings" + "<br />";
+                    log += "No Notifications To Deliver<br />";
                 }
             }
 
             return log;
-        }
-
-        private Dictionary<string, string> GetSettings(List<Setting> settings)
-        {
-            Dictionary<string, string> dictionary = new Dictionary<string, string>();
-            foreach (Setting setting in settings.OrderBy(item => item.SettingName).ToList())
-            {
-                dictionary.Add(setting.SettingName, setting.SettingValue);
-            }
-            return dictionary;
         }
     }
 }

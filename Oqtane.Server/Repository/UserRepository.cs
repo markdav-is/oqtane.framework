@@ -6,6 +6,18 @@ using Oqtane.Shared;
 
 namespace Oqtane.Repository
 {
+    public interface IUserRepository
+    {
+        IEnumerable<User> GetUsers();
+        User AddUser(User user);
+        User UpdateUser(User user);
+        User GetUser(int userId);
+        User GetUser(int userId, bool tracking);
+        User GetUser(string username);
+        User GetUser(string username, string email);
+        void DeleteUser(int userId);
+    }
+
     public class UserRepository : IUserRepository
     {
         private readonly IDbContextFactory<TenantDBContext> _dbContextFactory;
@@ -131,6 +143,13 @@ namespace Oqtane.Repository
         public void DeleteUser(int userId)
         {
             using var db = _dbContextFactory.CreateDbContext();
+
+            // remove permissions for user
+            foreach (var permission in db.Permission.Where(item => item.UserId == userId))
+            {
+                db.Permission.Remove(permission);
+            }
+
             var user = db.User.Find(userId);
             db.User.Remove(user);
             db.SaveChanges();

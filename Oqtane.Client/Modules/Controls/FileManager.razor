@@ -61,6 +61,12 @@
                                 {
                                     <input type="file" id="@_fileinputid" name="file" accept="@_filter" />
                                 }
+                                @if (MaxUploadFileSize > 0)
+                                {
+                                    <div class="row my-1">
+                                        <small class="fw-light">@string.Format(Localizer["File.MaxSize"], MaxUploadFileSize)</small>
+                                    </div>
+                                }
                             </div>
                             <div class="col-auto">
                                 <button type="button" class="btn btn-success" @onclick="UploadFiles">@SharedLocalizer["Upload"]</button>
@@ -107,7 +113,7 @@
 
 @code {
     private bool _initialized = false;
-    private List<Folder> _folders;
+    private List<Folder> _folders = new List<Folder>();
     private List<File> _files = new List<File>();
     private string _fileinputid = string.Empty;
     private string _progressinfoid = string.Empty;
@@ -158,11 +164,24 @@
     public bool UploadMultiple { get; set; } = false; // optional - enable multiple file uploads - default false
 
     [Parameter]
+    public bool AnonymizeUploadFilenames { get; set; } = false; // optional - indicate if file names should be anonymized on upload - default false
+
+    [Parameter]
     public int ChunkSize { get; set; } = 1; // optional - size of file chunks to upload in MB
+
+    [Parameter]
+    public int MaxUploadFileSize { get; set; } = -1; // optional - maximum upload file size in MB
 
     [Parameter]
     public EventCallback<int> OnUpload { get; set; } // optional - executes a method in the calling component when a file is uploaded
 
+    [Parameter]
+    public EventCallback<int> OnSelectFolder { get; set; } // optional - executes a method in the calling component when a folder is selected
+
+    [Parameter]
+    public EventCallback<int> OnSelectFile { get; set; } // optional - executes a method in the calling component when a file is selected
+
+    [Obsolete("Use OnSelectFile instead.")]
     [Parameter]
     public EventCallback<int> OnSelect { get; set; } // optional - executes a method in the calling component when a file is selected
 
@@ -188,25 +207,32 @@
             Filter = "nupkg";
             ShowSuccess = true;
         }
-
-        if (!string.IsNullOrEmpty(Folder) && Folder != Constants.PackagesFolder)
+        else
         {
-            Folder folder = await FolderService.GetFolderAsync(ModuleState.SiteId, Folder);
-            if (folder != null)
+            // folder path specified rather than folderid
+            if (!string.IsNullOrEmpty(Folder))
             {
-                FolderId = folder.FolderId;
-            }
-            else
-            {
-                FolderId = -1;
-                _message = "Folder Path " + Folder + " Does Not Exist";
-                _messagetype = MessageType.Error;
+                Folder folder = await FolderService.GetFolderAsync(ModuleState.SiteId, Folder);
+                if (folder != null)
+                {
+                    FolderId = folder.FolderId;
+                }
+                else
+                {
+                    FolderId = -1;
+                    _message = "Folder Path " + Folder + " Does Not Exist";
+                    _messagetype = MessageType.Error;
+                }
             }
         }
 
         if (ShowFolders)
         {
             _folders = await FolderService.GetFoldersAsync(ModuleState.SiteId);
+            if (_folders.Count == 1)
+            {
+                FolderId = _folders.First().FolderId;
+            }
         }
         else
         {
@@ -235,25 +261,24 @@
             }
         }
 
-        await SetImage();
-
         if (!string.IsNullOrEmpty(Filter))
         {
             _filter = "." + Filter.Replace(",", ",.");
         }
 
+        GetFolderPermission();
+        await SetImage();
         await GetFiles();
 
         _initialized = true;
     }
 
-    private async Task GetFiles()
+    private void GetFolderPermission()
     {
         _haseditpermission = false;
         if (Folder == Constants.PackagesFolder)
         {
             _haseditpermission = UserSecurity.IsAuthorized(PageState.User, RoleNames.Host);
-            _files = new List<File>();
         }
         else
         {
@@ -261,62 +286,12 @@
             if (folder != null)
             {
                 _haseditpermission = UserSecurity.IsAuthorized(PageState.User, PermissionNames.Edit, folder.PermissionList);
-                if (UserSecurity.IsAuthorized(PageState.User, PermissionNames.Browse, folder.PermissionList))
-                {
-                    _files = await FileService.GetFilesAsync(FolderId);
-                }
-                else
-                {
-                    _files = new List<File>();
-                }
             }
             else
             {
                 _haseditpermission = false;
-                _files = new List<File>();
-            }
-            if (_filter != "*")
-            {
-                List<File> filtered = new List<File>();
-                foreach (File file in _files)
-                {
-                    if (_filter.ToUpper().IndexOf("." + file.Extension.ToUpper()) != -1)
-                    {
-                        filtered.Add(file);
-                    }
-                }
-                _files = filtered;
             }
         }
-    }
-
-    private async Task FolderChanged(ChangeEventArgs e)
-    {
-        _message = string.Empty;
-        try
-        {
-            FolderId = int.Parse((string)e.Value);
-            await GetFiles();
-            FileId = -1;
-            _file = null;
-            _image = string.Empty;
-            StateHasChanged();
-        }
-        catch (Exception ex)
-        {
-            await logger.LogError(ex, "Error Loading Files {Error}", ex.Message);
-            _message = Localizer["Error.File.Load"];
-            _messagetype = MessageType.Error;
-        }
-    }
-
-    private async Task FileChanged(ChangeEventArgs e)
-    {
-        _message = string.Empty;
-        FileId = int.Parse((string)e.Value);
-        await SetImage();
-        await OnSelect.InvokeAsync(FileId);
-        StateHasChanged();
     }
 
     private async Task SetImage()
@@ -342,6 +317,74 @@
         }
     }
 
+    private async Task GetFiles()
+    {
+        if (ShowFiles)
+        {
+            Folder folder = _folders.FirstOrDefault(item => item.FolderId == FolderId);
+            if (folder != null)
+            {
+                if (UserSecurity.IsAuthorized(PageState.User, PermissionNames.Browse, folder.PermissionList))
+                {
+                    _files = await FileService.GetFilesAsync(FolderId);
+                }
+                else
+                {
+                    _files = new List<File>();
+                }
+            }
+            else
+            {
+                _files = new List<File>();
+            }
+            if (_filter != "*")
+            {
+                List<File> filtered = new List<File>();
+                foreach (File file in _files)
+                {
+                    if (_filter.ToUpper().IndexOf("." + file.Extension.ToUpper()) != -1)
+                    {
+                        filtered.Add(file);
+                    }
+                }
+                _files = filtered;
+            }
+        }
+    }
+
+    private async Task FolderChanged(ChangeEventArgs e)
+    {
+        _message = string.Empty;
+        try
+        {
+            FolderId = int.Parse((string)e.Value);
+            FileId = -1;
+            GetFolderPermission();
+            await SetImage();
+            await GetFiles();
+            await OnSelectFolder.InvokeAsync(FolderId);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            await logger.LogError(ex, "Error Loading Files {Error}", ex.Message);
+            _message = Localizer["Error.File.Load"];
+            _messagetype = MessageType.Error;
+        }
+    }
+
+    private async Task FileChanged(ChangeEventArgs e)
+    {
+        _message = string.Empty;
+        FileId = int.Parse((string)e.Value);
+        await SetImage();
+    #pragma warning disable CS0618
+        await OnSelect.InvokeAsync(FileId);
+    #pragma warning restore CS0618
+        await OnSelectFile.InvokeAsync(FileId);
+        StateHasChanged();
+    }
+
     private async Task UploadFiles()
     {
         _message = string.Empty;
@@ -351,16 +394,39 @@
         if (uploads.Length > 0)
         {
             string restricted = "";
+            string tooLarge = "";
             foreach (var upload in uploads)
             {
-                var filename = upload.Split(':')[0];
+                var fileparts = upload.Split(':');
+                var filename = fileparts[0];
+
+                if (MaxUploadFileSize > 0)
+                {
+                    var filesizeBytes = long.Parse(fileparts[1]);
+                    var filesizeMB = (double)filesizeBytes / (1024 * 1024);
+                    if (filesizeMB > MaxUploadFileSize)
+                    {
+                        tooLarge += (tooLarge == "" ? "" : ",") + filename;
+                    }
+                }
+
                 var extension = (filename.LastIndexOf(".") != -1) ? filename.Substring(filename.LastIndexOf(".") + 1) : "";
                 if (!PageState.Site.UploadableFiles.Split(',').Contains(extension.ToLower()))
                 {
                     restricted += (restricted == "" ? "" : ",") + extension;
                 }
             }
-            if (restricted == "")
+            if (restricted != "")
+            {
+                _message = string.Format(Localizer["Message.File.Restricted"], restricted);
+                _messagetype = MessageType.Warning;
+            }
+            else if (tooLarge != "")
+            {
+                _message = string.Format(Localizer["Message.File.TooLarge"], tooLarge, MaxUploadFileSize);
+                _messagetype = MessageType.Warning;
+            }
+            else
             {
                 CancellationTokenSource tokenSource = new CancellationTokenSource();
 
@@ -396,7 +462,7 @@
                     }
 
                     // upload files
-                    var success = await interop.UploadFiles(posturl, folder, _guid, SiteState.AntiForgeryToken, jwt, chunksize, tokenSource.Token);
+                    var success = await interop.UploadFiles(posturl, folder, _guid, SiteState.AntiForgeryToken, jwt, chunksize, AnonymizeUploadFilenames, tokenSource.Token);
 
                     // reset progress indicators
                     if (ShowProgress)
@@ -418,31 +484,34 @@
                             _message = Localizer["Success.File.Upload"];
                             _messagetype = MessageType.Success;
                         }
+
+                        FileId = -1;
+                        if (Folder != Constants.PackagesFolder && !AnonymizeUploadFilenames)
+                        {
+                            // set FileId to first file in upload collection
+                            var file = await FileService.GetFileAsync(int.Parse(folder), uploads[0].Split(":")[0]);
+                            if (file != null)
+                            {
+                                FileId = file.FileId;
+                            }
+                        }
+
+                        await SetImage();
+
+                        await OnUpload.InvokeAsync(FileId);
+#pragma warning disable CS0618
+                        await OnSelect.InvokeAsync(FileId);
+#pragma warning restore CS0618
+                        await OnSelectFile.InvokeAsync(FileId);
+
+                        await GetFiles();
+                        StateHasChanged();
                     }
                     else
                     {
                         await logger.LogError("File Upload Failed {Files}", uploads);
                         _message = Localizer["Error.File.Upload"];
                         _messagetype = MessageType.Error;
-                    }
-
-                    if (Folder == Constants.PackagesFolder)
-                    {
-                        await OnUpload.InvokeAsync(-1);
-                    }
-                    else
-                    {
-                        // set FileId to first file in upload collection
-                        var file = await FileService.GetFileAsync(int.Parse(folder), uploads[0].Split(":")[0]);
-                        if (file != null)
-                        {
-                            FileId = file.FileId;
-                            await SetImage();
-                            await OnSelect.InvokeAsync(FileId);
-                            await OnUpload.InvokeAsync(FileId);
-                        }
-                        await GetFiles();
-                        StateHasChanged();
                     }
                 }
                 catch (Exception ex)
@@ -456,12 +525,6 @@
                 finally {
                     tokenSource.Dispose();
                 }
-
-            }
-            else
-            {
-                _message = string.Format(Localizer["Message.File.Restricted"], restricted);
-                _messagetype = MessageType.Warning;
             }
         }
         else
@@ -486,44 +549,50 @@
                 _messagetype = MessageType.Success;
             }
 
-			await GetFiles();
-			FileId = -1;
-			await SetImage();
+            FileId = -1;
+            await SetImage();
+
+#pragma warning disable CS0618
             await OnSelect.InvokeAsync(FileId);
+#pragma warning restore CS0618
+            await OnSelectFile.InvokeAsync(FileId);
+
+            await GetFiles();
             StateHasChanged();
-		}
-		catch (Exception ex)
-		{
-			await logger.LogError(ex, "Error Deleting File {File} {Error}", FileId, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            await logger.LogError(ex, "Error Deleting File {File} {Error}", FileId, ex.Message);
 
-			_message = Localizer["Error.File.Delete"];
-			_messagetype = MessageType.Error;
-		}
-	}
+            _message = Localizer["Error.File.Delete"];
+            _messagetype = MessageType.Error;
+        }
+    }
 
-	public int GetFileId() => FileId;
+    public int GetFileId() => FileId;
 
-	public int GetFolderId() => FolderId;
+    public int GetFolderId() => FolderId;
 
-	public File GetFile() => _file;
+    public File GetFile() => _file;
 
-	public async Task Refresh()
-	{
-		await Refresh(-1);
-	}
+    public async Task Refresh()
+    {
+        await Refresh(-1);
+    }
 
-	public async Task Refresh(int fileId)
-	{
-		await GetFiles();
-		if (fileId != -1)
+    public async Task Refresh(int fileId)
+    {
+        await GetFiles();
+        FileId = -1;
+        if (fileId != -1)
 		{
 			var file = _files.Where(item => item.FileId == fileId).FirstOrDefault();
 			if (file != null)
 			{
 				FileId = file.FileId;
-				await SetImage();
 			}
 		}
-		StateHasChanged();
+        await SetImage();
+        StateHasChanged();
 	}
 }

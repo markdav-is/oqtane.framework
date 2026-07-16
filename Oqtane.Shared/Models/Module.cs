@@ -33,6 +33,17 @@ namespace Oqtane.Models
         /// </summary>
         public bool AllPages { get; set; }
 
+        /// <summary>
+        /// indicates if the module is shared across multiple pages (only set in specific scenarios to ensure performance)
+        /// </summary>
+        [NotMapped]
+        public bool IsShared { get; set; }
+
+        /// <summary>
+        /// Specifies the scenario where the IPortable interface is being invoked
+        /// </summary>
+        [NotMapped]
+        public string IPortableContext { get; set; }
 
         /// <summary>
         /// Reference to the <see cref="ModuleDefinition"/> used for this module.
@@ -112,6 +123,18 @@ namespace Oqtane.Models
         /// </summary>
         [NotMapped]
         public DateTime? ExpiryDate { get; set; }
+
+        /// <summary>
+        /// Header content to include at the top of a module instance in the UI
+        /// </summary>
+        [NotMapped]
+        public string Header { get; set; }
+
+        /// <summary>
+        /// Footer content to include below a module instance in the UI
+        /// </summary>
+        [NotMapped]
+        public string Footer { get; set; }
 
         #endregion
 
@@ -218,6 +241,8 @@ namespace Oqtane.Models
                 ContainerType = ContainerType,
                 EffectiveDate = EffectiveDate,
                 ExpiryDate = ExpiryDate,
+                Header = Header,
+                Footer = Footer,
                 CreatedBy = CreatedBy,
                 CreatedOn = CreatedOn,
                 ModifiedBy = ModifiedBy,

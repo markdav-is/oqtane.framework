@@ -180,4 +180,16 @@
   <data name="Login" xml:space="preserve">
     <value>Already have account? Login now.</value>
   </data>
+  <data name="TimeZone.Text" xml:space="preserve">
+    <value>Time Zone:</value>
+  </data>
+  <data name="TimeZone.HelpText" xml:space="preserve">
+    <value>Your time zone</value>
+  </data>
+  <data name="CultureCode.Text" xml:space="preserve">
+    <value>Language:</value>
+  </data>
+  <data name="CultureCode.HelpText" xml:space="preserve">
+    <value>Your preferred language. Note that you will only be able to choose from languages supported on this site.</value>
+  </data>
 </root>

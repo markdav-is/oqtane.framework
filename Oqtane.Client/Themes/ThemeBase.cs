@@ -43,18 +43,21 @@ namespace Oqtane.Themes
             {
                 List<Resource> resources = null;
                 var type = GetType();
-                if (type.BaseType == typeof(ThemeBase))
+                if (type.IsSubclassOf(typeof(ThemeBase)))
                 {
-                    if (PageState.Page.Resources != null)
+                    if (type.IsSubclassOf(typeof(ThemeControlBase)) || type.IsSubclassOf(typeof(ContainerBase)))
                     {
-                        resources = PageState.Page.Resources.Where(item => item.ResourceType == ResourceType.Script && item.Level == ResourceLevel.Page && item.Namespace == type.Namespace).ToList();
+                        if (Resources != null)
+                        {
+                            resources = Resources.Where(item => item.ResourceType == ResourceType.Script).ToList();
+                        }
                     }
-                }
-                else // themecontrolbase, containerbase
-                {
-                    if (Resources != null)
+                    else // ThemeBase
                     {
-                        resources = Resources.Where(item => item.ResourceType == ResourceType.Script).ToList();
+                        if (PageState.Page.Resources != null)
+                        {
+                            resources = PageState.Page.Resources.Where(item => item.ResourceType == ResourceType.Script && item.Level == ResourceLevel.Page && item.Namespace == type.Namespace).ToList();
+                        }
                     }
                 }
                 if (resources != null && resources.Any())
@@ -105,11 +108,20 @@ namespace Oqtane.Themes
             }
         }
 
-        // path method
+        // path methods
 
         public string ThemePath()
         {
             return PageState?.Alias.BaseUrl + "/Themes/" + GetType().Namespace + "/";
+        }
+
+        public string StaticAssetPath
+        {
+            get
+            {
+                // requires theme to have implemented ITheme
+                return PageState?.Alias.BaseUrl + "_content/" + ThemeState?.PackageName + "/";
+            }
         }
 
         // fingerprint hash code for static assets
@@ -308,11 +320,10 @@ namespace Oqtane.Themes
 
         public async Task Log(Alias alias, LogLevel level, LogFunction function, Exception exception, string message, params object[] args)
         {
-            int pageId = PageState.Page.PageId;
             string category = GetType().AssemblyQualifiedName;
             string feature = Utilities.GetTypeNameLastSegment(category, 1);
 
-            await LoggingService.Log(alias, pageId, null, PageState.User?.UserId, category, feature, function, level, exception, message, args);
+            await LoggingService.Log(alias, PageState.Page.PageId, null, PageState.User?.UserId, category, feature, PageState.RemoteIPAddress, function, level, exception, message, args);
         }
 
         public class Logger
